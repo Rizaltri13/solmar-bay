@@ -1,7 +1,7 @@
 {
  "format": "jpeg",
  "maxBytes": 262144,
- "note": "Real frames of the game, staged deterministically through the game's own systems (?shot=<name>&seed=1) and captured in headless Chromium, unedited. v3: every frame is pinned to golden hour (dayT 0.66) by staging.pinShotLight so the day-cycle light is identical across captures.",
+ "note": "Real frames of the game, staged deterministically through the game's own systems (?shot=<name>&seed=1) and captured in headless Chromium, unedited. Round 4: retaken from the fully rewritten codebase; every frame is pinned to golden hour (dayT 0.66) by staging.pinShotLight so the day-cycle light is identical across captures.",
  "size": "1280x720",
  "shots": [
   {

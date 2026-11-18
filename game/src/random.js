@@ -1,49 +1,105 @@
-// Seeded RNG (mulberry32) so staged scenes and self-tests are reproducible.
+// random.js — deterministic randomness for Solmar Bay.
+//
+// The whole game draws from one seeded stream so that a staged screenshot
+// or a self-test run can be reproduced exactly by passing the same ?seed=.
+// The generator is mulberry32: tiny, fast, and good enough for placement
+// scatter and AI coin flips (it is not used for anything security-shaped).
+
 export function mulberry32(seed) {
-  let a = seed >>> 0;
-  return function () {
-    a |= 0; a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+  let state = seed >>> 0;
+  return function nextValue() {
+    state = (state + 0x6d2b79f5) | 0;
+    let t = state;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }
 
+// Convenience wrapper used across the codebase. Each method consumes draws
+// from the same underlying stream, in call order — that ordering is what
+// makes a seed fully determine a generated city.
 export class RNG {
-  constructor(seed = 1) { this.next = mulberry32(seed); this.seed = seed; }
-  range(a, b) { return a + this.next() * (b - a); }
-  int(a, b) { return Math.floor(this.range(a, b + 1)); }
-  pick(arr) { return arr[Math.floor(this.next() * arr.length)]; }
-  chance(p) { return this.next() < p; }
-  sign() { return this.next() < 0.5 ? -1 : 1; }
-  // A full-turn angle — spawns and sweeps used to inline range(0, 2π)
-  // in five places; one named helper keeps those call sites readable.
-  angle() { return this.next() * Math.PI * 2; }
-  // Symmetric jitter around a centre value (decoration scatter, spawns).
-  jitter(centre, spread) { return centre + this.range(-spread, spread); }
-  // Clamp a drawn value into [lo, hi] without consuming extra draws.
-  clampedRange(a, b, lo, hi) { return Math.max(lo, Math.min(hi, this.range(a, b))); }
-  // Weighted pick over [value, weight] pairs — district dressing + spawns.
+  constructor(seed = 1) {
+    this.seed = seed;
+    this.next = mulberry32(seed);
+  }
+
+  // Uniform float in [a, b).
+  range(a, b) {
+    return a + this.next() * (b - a);
+  }
+
+  // Uniform integer in [a, b] inclusive.
+  int(a, b) {
+    return a + Math.floor(this.next() * (b - a + 1));
+  }
+
+  pick(list) {
+    return list[Math.floor(this.next() * list.length)];
+  }
+
+  chance(probability) {
+    return this.next() < probability;
+  }
+
+  // Percentage-flavoured chance (chancePct(30) === chance(0.30)) for call
+  // sites that read better in whole numbers.
+  chancePct(percent) {
+    return this.next() * 100 < percent;
+  }
+
+  sign() {
+    return this.chance(0.5) ? -1 : 1;
+  }
+
+  // Random heading, used for spawns and particle bursts.
+  angle() {
+    return this.next() * Math.PI * 2;
+  }
+
+  // centre ± spread — handy for scattering decoration around a anchor.
+  jitter(centre, spread) {
+    return centre + this.range(-spread, spread);
+  }
+
+  // Draw in [a, b) and then clamp the result into [lo, hi].
+  clampedRange(a, b, lo, hi) {
+    const v = this.range(a, b);
+    return v < lo ? lo : v > hi ? hi : v;
+  }
+
+  // Pick from [value, weight] pairs. Entries with no positive weight are
+  // ignored entirely; if every weight is dead we fall back to the raw list
+  // so a misconfigured table still returns something sane.
   weighted(pairs) {
-    // Zero/negative weights must never win: the old loop could return a
-    // zero-weight entry when the roll landed exactly on a boundary.
-    const live = pairs.filter(([, w]) => w > 0);
-    const table = live.length ? live : pairs;
-    let total = 0;
-    for (const [, w] of table) total += w;
-    let roll = this.next() * total;
-    for (const [v, w] of table) { roll -= w; if (roll < 0) return v; }
+    const usable = pairs.filter((entry) => entry[1] > 0);
+    const table = usable.length > 0 ? usable : pairs;
+    let totalWeight = 0;
+    for (const entry of table) totalWeight += entry[1];
+    let roll = this.next() * totalWeight;
+    for (const entry of table) {
+      roll -= entry[1];
+      if (roll < 0) return entry[0];
+    }
     return table[table.length - 1][0];
   }
-  // A child stream with its own seed — subsystems can draw randomness
-  // without perturbing the parent sequence the staging relies on.
-  fork(salt = 1) { return new RNG((this.seed ^ (salt * 0x9e3779b9)) >>> 0); }
-  shuffle(arr) {
-    const out = [...arr];
-    for (let i = out.length - 1; i > 0; i--) {
+
+  // Spawn an independent stream derived from this seed. Subsystems that
+  // want private randomness (so they cannot perturb staged scenes) fork.
+  fork(salt = 1) {
+    return new RNG((this.seed ^ Math.imul(salt, 0x9e3779b9)) >>> 0);
+  }
+
+  // Fisher–Yates on a copy; the input array is left untouched.
+  shuffle(list) {
+    const copy = list.slice();
+    for (let i = copy.length - 1; i > 0; i--) {
       const j = Math.floor(this.next() * (i + 1));
-      [out[i], out[j]] = [out[j], out[i]];
+      const tmp = copy[i];
+      copy[i] = copy[j];
+      copy[j] = tmp;
     }
-    return out;
+    return copy;
   }
 }

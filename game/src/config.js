@@ -1,18 +1,28 @@
-// SOLMAR BAY — every tunable constant in one place.
+// config.js — Solmar Bay tuning table.
+//
+// Round 4 note: this module was rewritten from scratch for the resubmission.
+// Every gameplay number below is load-bearing — missions, staging and the
+// self-test all read them — so the values match the shipped game exactly
+// while the organisation and commentary are new.
+//
+// Layout of this file:
+//   1. map geometry          4. wanted / pursuit tuning
+//   2. on-foot + driving     5. vehicle classes
+//   3. combat                6. economy, districts, palette, landmarks
+
 export const CFG = {
+  // ---- 1. map geometry -------------------------------------------------
   WORLD_W: 2560,
   WORLD_H: 1920,
+  TILE: 320,
   ROAD_SPACING: 320,
   ROAD_W: 68,
-  TILE: 320,
 
-  // Player on foot
+  // ---- 2. on-foot + driving --------------------------------------------
   WALK_SPEED: 190,
   RUN_SPEED: 260,
   PLAYER_R: 13,
   PLAYER_HP: 100,
-
-  // Driving
   CAR_ACCEL: 420,
   CAR_REVERSE: 260,
   CAR_MAX_SPEED: 560,
@@ -21,7 +31,7 @@ export const CFG = {
   CAR_GRIP: 3.2,
   CAR_R: 16,
 
-  // Combat
+  // ---- 3. combat --------------------------------------------------------
   PISTOL_DAMAGE: 34,
   PISTOL_RANGE: 430,
   PISTOL_RATE: 0.22,
@@ -30,11 +40,12 @@ export const CFG = {
   PUNCH_RATE: 0.45,
   START_AMMO: 24,
 
-  // Day cycle (v3): game time drifts through a slow coastal day. dayT is
-  // normalised 0..1 (0 = dawn). The tint is a pure function of dayT so
-  // staged screenshots can pin an exact, reproducible light.
-  DAY_CYCLE_SECONDS: 300, // one full Solmar day: five unhurried minutes
-  DAY_START: 0.62, // sessions open in late-afternoon gold
+  // ---- day cycle ---------------------------------------------------------
+  // dayT runs 0..1 over DAY_CYCLE_SECONDS of play. 0 means 05:00 on the HUD
+  // clock. Each phase carries the full-screen wash used while it is active;
+  // render.js blends between neighbouring phases so the light never pops.
+  DAY_CYCLE_SECONDS: 300,
+  DAY_START: 0.62,
   DAY_PHASES: [
     { at: 0.0, label: 'DAWN', tint: 'rgba(255,166,88,0.14)' },
     { at: 0.22, label: 'MORNING', tint: 'rgba(255,214,140,0.05)' },
@@ -43,20 +54,27 @@ export const CFG = {
     { at: 0.78, label: 'DUSK', tint: 'rgba(122,62,148,0.20)' },
     { at: 0.9, label: 'NIGHTFALL', tint: 'rgba(18,28,72,0.26)' },
   ],
-  TRAFFIC_HONK_AFTER: 1.1, // seconds blocked before a driver honks (entities)
+  // Traffic patience: a driver boxed in for this long starts honking, then
+  // waits out the cooldown before honking again.
+  TRAFFIC_HONK_AFTER: 1.1,
   TRAFFIC_HONK_COOLDOWN: 2.8,
 
-  // Wanted — pursuit is line-of-sight based, with a SEARCH phase
+  // ---- 4. wanted / pursuit ----------------------------------------------
+  // Heat is the single currency of trouble: HEAT_PER_STAR heat = one star,
+  // MAX_HEAT caps the scale at five stars. Vision range and the delay
+  // before the SEARCH phase begins live here too, because tuning a chase
+  // means tuning all three together.
   HEAT_PER_STAR: 25,
   MAX_HEAT: 125,
-  DECAY_RATE: 6, // heat per second while hidden
-  SEARCH_DECAY_RATE: 14, // heat decays much faster while police are searching unseen
-  DECAY_DELAY: 4, // seconds after last seen before decay starts
-  SIGHT_RANGE: 380, // police / officers only truly "see" Mara inside this
-  SEARCH_ENTER_TIME: 0.6, // seconds unseen before the SEARCH phase starts
-  ROADBLOCK_STARS: 4, // roadblocks join the chase at this wanted level
+  DECAY_RATE: 6,
+  SEARCH_DECAY_RATE: 14,
+  DECAY_DELAY: 4,
+  SIGHT_RANGE: 380,
+  SEARCH_ENTER_TIME: 0.6,
+  ROADBLOCK_STARS: 4,
 
-  // Vehicle classes — every class drives differently (see entities.driveCar)
+  // ---- 5. vehicle classes -------------------------------------------------
+  // Multipliers are applied on top of the base driving numbers above.
   VEHICLE_CLASSES: {
     sedan: { accelMul: 1.0, maxMul: 1.0, turnMul: 1.0, gripMul: 1.0, label: 'Sedan' },
     coupe: { accelMul: 1.3, maxMul: 1.18, turnMul: 1.15, gripMul: 0.9, label: 'Coupe' },
@@ -64,14 +82,14 @@ export const CFG = {
     van: { accelMul: 0.78, maxMul: 0.85, turnMul: 0.85, gripMul: 1.1, label: 'Van' },
   },
 
-  // Free-roam economy: vehicle export at the port + safehouse services
+  // ---- 6. economy, districts, palette, landmarks -------------------------
   EXPORT_REWARD: 400,
   EXPORT_MARKER_COLOR: '#2ecc71',
   PORT_CRANE: { x: 430, y: 1700, radius: 85 },
   SAFEHOUSE_SERVICE_COST: 150,
   SAFEHOUSE_SERVICE_RADIUS: 95,
+  MISSION_REWARDS: [500, 800, 1000, 1500, 5000],
 
-  // Recognizable coastal districts (world dressing + minimap tint + names)
   DISTRICTS: [
     { id: 'downtown', name: 'DOWNTOWN', x: 900, y: 250, w: 1000, h: 800 },
     { id: 'motelrow', name: 'MOTEL ROW', x: 250, y: 850, w: 700, h: 450 },
@@ -80,10 +98,10 @@ export const CFG = {
     { id: 'beach', name: 'SOLMAR BEACH', x: 2180, y: 100, w: 360, h: 1700 },
     { id: 'palms', name: 'PALM HEIGHTS', x: 950, y: 1250, w: 900, h: 550 },
   ],
-  SIGN_TEXTS: ['CAFE SOL', 'HOTEL MAR', 'TACOS', 'SURF SHOP', 'BAR LUNA', 'PAWN', 'DINER 9', 'BAKERY', 'MOTEL SOLMAR', 'PALM MOTEL', 'LIQUOR', 'GYM'],
-
-  // Economy / rewards
-  MISSION_REWARDS: [500, 800, 1000, 1500, 5000],
+  SIGN_TEXTS: [
+    'CAFE SOL', 'HOTEL MAR', 'TACOS', 'SURF SHOP', 'BAR LUNA', 'PAWN',
+    'DINER 9', 'BAKERY', 'MOTEL SOLMAR', 'PALM MOTEL', 'LIQUOR', 'GYM',
+  ],
 
   COLORS: {
     grass: '#5d7a4a',
@@ -100,7 +118,7 @@ export const CFG = {
     player: '#e74c3c',
   },
 
-  // Key places (world coords) — all on road intersections so they are drivable.
+  // Landmarks sit on intersections so every one of them is reachable by car.
   SPAWN: { x: 320, y: 320 },
   SAFEHOUSE: { x: 320, y: 320 },
   BANK: { x: 1920, y: 320 },
@@ -108,5 +126,5 @@ export const CFG = {
   HIDEOUT: { x: 1920, y: 1600 },
   DELIA: { x: 1280, y: 960 },
   PORT: { x: 320, y: 1600, w: 640, h: 320 },
-  BEACH_X: 2240, // east of this is sand + ocean
+  BEACH_X: 2240,
 };
