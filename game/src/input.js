@@ -13,14 +13,28 @@ export class Input {
     window.addEventListener('keyup', (e) => this.keys.delete(e.code));
     window.addEventListener('blur', () => this.keys.clear());
     canvas.addEventListener('mousemove', (e) => {
+      // Scale CSS pixels → canvas pixels: the canvas is styled to the full
+      // window but has a fixed internal resolution, so without this the aim
+      // point drifts whenever the window is not exactly canvas-sized.
       const r = canvas.getBoundingClientRect();
-      this.mouse.x = e.clientX - r.left; this.mouse.y = e.clientY - r.top;
+      const scaleX = r.width ? canvas.width / r.width : 1;
+      const scaleY = r.height ? canvas.height / r.height : 1;
+      this.mouse.x = (e.clientX - r.left) * scaleX;
+      this.mouse.y = (e.clientY - r.top) * scaleY;
+      this.mouse.scaleX = scaleX; this.mouse.scaleY = scaleY;
     });
     canvas.addEventListener('mousedown', (e) => {
       if (e.button === 0) { this.mouse.down = true; this.mouse.clicked = true; }
     });
     window.addEventListener('mouseup', (e) => { if (e.button === 0) this.mouse.down = false; });
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+  }
+  // Angle from a world point (drawn at cam centre) to the mouse, in world
+  // space — mouse coords are already canvas-scaled by the move handler.
+  mouseAngleFrom(wx, wy, cam, canvas) {
+    const sx = wx - cam.x + canvas.width / 2;
+    const sy = wy - cam.y + canvas.height / 2;
+    return Math.atan2(this.mouse.y - sy, this.mouse.x - sx);
   }
   down(code) { return this.keys.has(code); }
   wasPressed(code) { return this.pressed.has(code); }

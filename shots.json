@@ -1,1 +1,28 @@
-{"format":"jpeg","maxBytes":262144,"note":"Real frames of the game, staged deterministically through the game's own systems (?shot=<name>&seed=1) and captured in headless Chromium, unedited.","shots":[{"description":"Cover: Mara driving mid-chase, three stars, police cars closing in, minimap and mission objective visible","file":"1-chase.jpg","url":"http://localhost:8080/?shot=chase&seed=1"},{"description":"Start screen with title, story and controls","file":"2-title.jpg","url":"http://localhost:8080/?shot=title&seed=1"},{"description":"Courier Run mission in progress, driving toward the marina drop marker","file":"3-mission.jpg","url":"http://localhost:8080/?shot=mission&seed=1"},{"description":"On-foot street scene: Mara aiming, traffic, pedestrians, one wanted star","file":"4-foot.jpg","url":"http://localhost:8080/?shot=foot&seed=1"}],"size":"1280x720"}
+{
+ "format": "jpeg",
+ "maxBytes": 262144,
+ "note": "Real frames of the game, staged deterministically through the game's own systems (?shot=<name>&seed=1) and captured in headless Chromium, unedited.",
+ "size": "1280x720",
+ "shots": [
+  {
+   "file": "1-chase.jpg",
+   "url": "http://localhost:8080/?shot=chase&seed=1",
+   "description": "Cover: Mara driving mid-chase in Palm Heights \u2014 palm trees and district signs in frame, three wanted stars with PURSUIT label, three police cars closing in, traffic and pedestrians, HUD, route line and minimap with the Heat objective"
+  },
+  {
+   "file": "2-title.jpg",
+   "url": "http://localhost:8080/?shot=title&seed=1",
+   "description": "Start screen with title, district list, story and controls (including safehouse rest and the port export loop)"
+  },
+  {
+   "file": "3-mission.jpg",
+   "url": "http://localhost:8080/?shot=mission&seed=1",
+   "description": "Courier Run in progress: package 1 on board after the bakery pickup, driving toward the marina drop, timer and route line visible"
+  },
+  {
+   "file": "4-foot.jpg",
+   "url": "http://localhost:8080/?shot=foot&seed=1",
+   "description": "On-foot street scene: Mara aiming, traffic, pedestrians at a crosswalk, one wanted star, an officer closing to return fire"
+  }
+ ]
+}

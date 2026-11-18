@@ -20,11 +20,13 @@ export const MISSIONS = [
   },
   {
     id: 'm2', title: 'Courier Run',
-    briefing: 'DELIA: "Three drops, one clock. The buyers don\'t wait and neither does the heat. Move."',
+    briefing: 'DELIA: "No package, no payday. Pick up at the bakery, drop at the marina. Pick up at the garage, drop at the port gate. Last parcel rides to the north arcade. One clock — move."',
     steps: [
-      { text: 'Drop 1/3: the marina kiosk', target: () => ({ x: 1920, y: 960 }), radius: 70, kind: 'reach', timer: 90 },
+      { text: 'Pick up package 1 at the Palm Heights bakery', target: () => ({ x: 960, y: 640 }), radius: 70, kind: 'pickup', timer: 150 },
+      { text: 'Drop 1/3: the marina kiosk', target: () => ({ x: 1920, y: 960 }), radius: 70, kind: 'reach' },
+      { text: 'Pick up package 2 at the garage', target: () => CFG.GARAGE, radius: 70, kind: 'pickup' },
       { text: 'Drop 2/3: the port gate', target: () => ({ x: 320, y: 1600 }), radius: 70, kind: 'reach' },
-      { text: 'Drop 3/3: the north arcade', target: () => ({ x: 1280, y: 320 }), radius: 70, kind: 'reach' },
+      { text: 'Drop 3/3: the north arcade (final parcel is on board)', target: () => ({ x: 1280, y: 320 }), radius: 70, kind: 'reach' },
     ],
   },
   {
@@ -44,17 +46,24 @@ export const MISSIONS = [
   },
   {
     id: 'm5', title: 'The Big Score',
-    briefing: 'DELIA: "The Bay Federal vault. In, out, gone. Grab the cash, then lose a three-star chase to the hideout. This is the one we retire on."',
+    briefing: 'DELIA: "The Bay Federal vault. Two locks: crack the door, then hold the vault while it cycles. The second lock trips the alarm — then you lose a three-star chase to the hideout. This is the one we retire on."',
     steps: [
       { text: 'Reach Bay Federal bank', target: () => CFG.BANK, radius: 80, kind: 'reach' },
-      { text: 'Grab the cash (hold position)', target: () => CFG.BANK, radius: 80, kind: 'hold', hold: 4 },
-      { text: 'Escape the 3-star chase — reach the hideout', target: () => CFG.HIDEOUT, radius: 80, kind: 'escape', wanted: 3 },
+      { text: 'Vault lock 1/2 — hold at the vault door', target: () => CFG.BANK, radius: 80, kind: 'vault', hold: 2.5, vaultStage: 1 },
+      { text: 'Vault lock 2/2 — hold while the vault cycles (alarm armed!)', target: () => CFG.BANK, radius: 80, kind: 'vault', hold: 3.5, vaultStage: 2, alarm: true },
+      // No 'wanted' here: the vault alarm already set exactly 3 stars.
+      { text: 'Escape the 3-star chase — reach the hideout', target: () => CFG.HIDEOUT, radius: 80, kind: 'escape' },
     ],
   },
 ];
 
 export function missionState() {
-  return { idx: 0, step: 0, timer: 0, holdT: 0, done: false, storyDone: false, started: false };
+  return {
+    idx: 0, step: 0, timer: 0, holdT: 0, done: false, storyDone: false, started: false,
+    packages: 0, // courier parcels currently on board
+    repoDamage: 0, // damage taken while driving the repo coupe (cuts the bonus)
+    vaultStage: 0, // bank vault locks cracked so far
+  };
 }
 
 export function currentMission(ms) {
@@ -90,11 +99,21 @@ export function startMission(G) {
 function completeMission(G) {
   const ms = G.missions;
   const m = currentMission(ms);
-  const reward = CFG.MISSION_REWARDS[ms.idx] || 500;
+  let reward = CFG.MISSION_REWARDS[ms.idx] || 500;
+  // Repo Job careful-driving bonus: every dent in the coupe cuts the payout.
+  if (m && m.id === 'm4') {
+    const bonusCut = Math.min(1000, Math.round(ms.repoDamage * 10));
+    reward = Math.max(500, reward - bonusCut);
+    if (bonusCut > 0) G.ui.dialogue(`DELIA: "Scratches cost money, Mara. -$${bonusCut} off the repo fee."`, 'DELIA ROOK');
+    else G.ui.dialogue('DELIA: "Scratch-free. Full fee, plus my respect."', 'DELIA ROOK');
+  }
   G.player.cash += reward;
   G.player.ammo = Math.max(G.player.ammo, CFG.START_AMMO);
   G.ui.banner(`Job done — +$${reward}`);
-  G.ui.dialogue(`DELIA: "Clean work, Mara. $${reward} is yours. Next job when you're ready."`, 'DELIA ROOK');
+  // The repo job already spoke its scratch verdict above; don't talk over it.
+  if (!(m && m.id === 'm4')) {
+    G.ui.dialogue(`DELIA: "Clean work, Mara. $${reward} is yours. Next job when you're ready."`, 'DELIA ROOK');
+  }
   G.audio.mission();
   G.addPickupText(G.player.x, G.player.y - 30, `+$${reward}`, '#2ecc71');
   ms.idx += 1; ms.step = 0; ms.timer = 0; ms.holdT = 0; ms.started = false;
@@ -139,13 +158,35 @@ export function updateMissions(G, dt) {
     if (G.player.inCar && dist < s.radius) { advance(G); }
     return;
   }
-  if (s.kind === 'hold') {
+  if (s.kind === 'pickup') {
+    if (dist < s.radius) {
+      ms.packages += 1;
+      G.audio.pickup();
+      G.ui.banner(`Package ${ms.packages} on board — keep it moving`);
+      G.addPickupText(p.x, p.y - 30, 'PACKAGE +1', '#ffe600');
+      advance(G);
+    }
+    return;
+  }
+  if (s.kind === 'hold' || s.kind === 'vault') {
     if (dist < s.radius) {
       ms.holdT += dt;
-      if (ms.holdT > 0.4 && ms.holdT < 0.5) G.ui.banner('Grabbing the cash…');
+      if (ms.holdT > 0.4 && ms.holdT < 0.5) {
+        G.ui.banner(s.kind === 'vault' ? `Cracking vault lock ${s.vaultStage}/2 — hold position…` : 'Grabbing the cash…');
+      }
       if (ms.holdT >= s.hold) {
-        G.player.cash += 250; // pocket cash from the vault floor
-        G.addHeat(3 * CFG.HEAT_PER_STAR); // the alarm trips: 3 stars
+        if (s.kind === 'vault') {
+          ms.vaultStage = s.vaultStage;
+          G.player.cash += s.vaultStage === 2 ? 250 : 60;
+          if (s.alarm) { // second lock trips the alarm: the pressured escape begins
+            G.addHeat(3 * CFG.HEAT_PER_STAR);
+            G.ui.banner('ALARM! Vault open — now RUN');
+            G.ui.dialogue('DELIA: "That\'s the alarm, Mara. Three stars. Hideout. GO."', 'DELIA ROOK');
+          } else G.ui.banner('Lock 1 open — one more, stay on it');
+        } else {
+          G.player.cash += 250; // pocket cash from the vault floor
+          G.addHeat(3 * CFG.HEAT_PER_STAR); // the alarm trips: 3 stars
+        }
         advance(G);
       }
     } else ms.holdT = 0;
@@ -158,8 +199,66 @@ export function updateMissions(G, dt) {
     }
     return;
   }
-  // plain 'reach'
-  if (dist < s.radius) advance(G);
+  // plain 'reach' — a courier DROP hands a parcel over (count goes down)
+  if (dist < s.radius) {
+    if (m.id === 'm2' && ms.packages > 0) {
+      ms.packages -= 1;
+      G.addPickupText(p.x, p.y - 30, 'DELIVERED', '#2ecc71');
+    }
+    advance(G);
+  }
+}
+
+// ---------- free-roam progression: vehicle export + safehouse service ----
+// A marked "wanted" car is always waiting somewhere in the city. Drive it
+// under the port crane and the exporter pays cash — repeatable forever,
+// and the cash loop funds safehouse health/ammo refills between jobs.
+export function markExportCar(G, rng) {
+  const pool = [...G.parked, ...G.traffic].filter((c) => !c.isRepo && !c.isExport);
+  if (!pool.length) return null;
+  const car = pool[Math.floor(rng.next() * pool.length)];
+  car.isExport = true;
+  G.exportCar = car;
+  return car;
+}
+
+export function updateExportActivity(G, dt, rng) {
+  if (!G.exportCar || G.exportCar.hp <= 0) { G.exportCar = null; }
+  if (!G.exportCar) { markExportCar(G, rng); return; }
+  const p = G.player;
+  if (p.inCar && p.car === G.exportCar) {
+    const c = CFG.PORT_CRANE;
+    if (Math.hypot(p.car.x - c.x, p.car.y - c.y) < c.radius) {
+      p.cash += CFG.EXPORT_REWARD;
+      G.exportsDone = (G.exportsDone || 0) + 1;
+      G.addPickupText(p.car.x, p.car.y - 34, `EXPORT +$${CFG.EXPORT_REWARD}`, '#2ecc71');
+      G.ui.banner(`Vehicle exported — +$${CFG.EXPORT_REWARD} (total exports: ${G.exportsDone})`);
+      G.audio.mission();
+      // The exported car leaves on the crane ship; a fresh target is marked.
+      G.traffic = G.traffic.filter((x) => x !== p.car);
+      G.parked = G.parked.filter((x) => x !== p.car);
+      const delivered = p.car;
+      p.car = null; p.inCar = false;
+      p.x = delivered.x + 36; p.y = delivered.y + 20;
+      G.exportCar = null;
+      markExportCar(G, rng);
+    }
+  }
+}
+
+// Press B at the safehouse: cash buys a full health + ammo refill.
+export function trySafehouseService(G) {
+  const p = G.player;
+  const s = CFG.SAFEHOUSE;
+  if (Math.hypot(p.x - s.x, p.y - s.y) > CFG.SAFEHOUSE_SERVICE_RADIUS && !p.inCar) return false;
+  if (p.inCar) return false;
+  if (p.cash < CFG.SAFEHOUSE_SERVICE_COST) { G.ui.banner(`Safehouse rest costs $${CFG.SAFEHOUSE_SERVICE_COST} — cash short`); return false; }
+  if (p.hp >= CFG.PLAYER_HP && p.ammo >= CFG.START_AMMO) { G.ui.banner('Already fresh — save your cash'); return false; }
+  p.cash -= CFG.SAFEHOUSE_SERVICE_COST;
+  p.hp = CFG.PLAYER_HP; p.ammo = Math.max(p.ammo, CFG.START_AMMO) + 12;
+  G.ui.banner(`Rested at the safehouse — health + ammo refilled (-$${CFG.SAFEHOUSE_SERVICE_COST})`);
+  G.audio.pickup();
+  return true;
 }
 
 function advance(G) {

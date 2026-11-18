@@ -30,11 +30,41 @@ export const CFG = {
   PUNCH_RATE: 0.45,
   START_AMMO: 24,
 
-  // Wanted
+  // Wanted — pursuit is line-of-sight based, with a SEARCH phase
   HEAT_PER_STAR: 25,
   MAX_HEAT: 125,
   DECAY_RATE: 6, // heat per second while hidden
+  SEARCH_DECAY_RATE: 14, // heat decays much faster while police are searching unseen
   DECAY_DELAY: 4, // seconds after last seen before decay starts
+  SIGHT_RANGE: 380, // police / officers only truly "see" Mara inside this
+  SEARCH_ENTER_TIME: 0.6, // seconds unseen before the SEARCH phase starts
+  ROADBLOCK_STARS: 4, // roadblocks join the chase at this wanted level
+
+  // Vehicle classes — every class drives differently (see entities.driveCar)
+  VEHICLE_CLASSES: {
+    sedan: { accelMul: 1.0, maxMul: 1.0, turnMul: 1.0, gripMul: 1.0, label: 'Sedan' },
+    coupe: { accelMul: 1.3, maxMul: 1.18, turnMul: 1.15, gripMul: 0.9, label: 'Coupe' },
+    truck: { accelMul: 0.62, maxMul: 0.72, turnMul: 0.72, gripMul: 1.2, label: 'Truck' },
+    van: { accelMul: 0.78, maxMul: 0.85, turnMul: 0.85, gripMul: 1.1, label: 'Van' },
+  },
+
+  // Free-roam economy: vehicle export at the port + safehouse services
+  EXPORT_REWARD: 400,
+  EXPORT_MARKER_COLOR: '#2ecc71',
+  PORT_CRANE: { x: 430, y: 1700, radius: 85 },
+  SAFEHOUSE_SERVICE_COST: 150,
+  SAFEHOUSE_SERVICE_RADIUS: 95,
+
+  // Recognizable coastal districts (world dressing + minimap tint + names)
+  DISTRICTS: [
+    { id: 'downtown', name: 'DOWNTOWN', x: 900, y: 250, w: 1000, h: 800 },
+    { id: 'motelrow', name: 'MOTEL ROW', x: 250, y: 850, w: 700, h: 450 },
+    { id: 'marina', name: 'MARINA', x: 1500, y: 850, w: 700, h: 450 },
+    { id: 'port', name: 'PORT OF SOLMAR', x: 250, y: 1500, w: 750, h: 380 },
+    { id: 'beach', name: 'SOLMAR BEACH', x: 2180, y: 100, w: 360, h: 1700 },
+    { id: 'palms', name: 'PALM HEIGHTS', x: 950, y: 1250, w: 900, h: 550 },
+  ],
+  SIGN_TEXTS: ['CAFE SOL', 'HOTEL MAR', 'TACOS', 'SURF SHOP', 'BAR LUNA', 'PAWN', 'DINER 9', 'BAKERY', 'MOTEL SOLMAR', 'PALM MOTEL', 'LIQUOR', 'GYM'],
 
   // Economy / rewards
   MISSION_REWARDS: [500, 800, 1000, 1500, 5000],

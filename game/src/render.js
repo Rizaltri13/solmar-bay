@@ -36,7 +36,88 @@ function drawCar(ctx, c, time) {
     ctx.fillStyle = '#ffe600'; ctx.font = 'bold 9px sans-serif'; ctx.textAlign = 'center';
     ctx.fillText('★ REPO', 0, -h / 2 - 6);
   }
+  if (c.isExport) {
+    ctx.fillStyle = '#2ecc71'; ctx.font = 'bold 9px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText('▼ EXPORT', 0, -h / 2 - 6);
+    ctx.strokeStyle = '#2ecc71'; ctx.lineWidth = 2; ctx.strokeRect(-w / 2 - 3, -h / 2 - 3, w + 6, h + 6);
+  }
+  if (c.hitFlash > 0) { // visible impact reaction: white-hot flash + dent smoke tint
+    ctx.globalAlpha = Math.min(0.8, c.hitFlash * 2);
+    ctx.fillStyle = '#fff'; roundRect(ctx, -w / 2, -h / 2, w, h, 6); ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+  if (c.kind === 'roadblock') {
+    ctx.fillStyle = '#ffe600'; ctx.font = 'bold 8px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText('ROADBLOCK', 0, -h / 2 - 6);
+  }
   ctx.restore();
+}
+
+function drawPalm(ctx, palm) {
+  const s = palm.s || 1;
+  ctx.fillStyle = '#7a5a34'; ctx.fillRect(palm.x - 2 * s, palm.y - 2 * s, 4 * s, 10 * s);
+  ctx.strokeStyle = '#2e7d32'; ctx.lineWidth = 3 * s;
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2 + palm.x * 0.01;
+    ctx.beginPath(); ctx.moveTo(palm.x, palm.y - 2 * s);
+    ctx.quadraticCurveTo(palm.x + Math.cos(a) * 10 * s, palm.y - 8 * s, palm.x + Math.cos(a) * 16 * s, palm.y + 2 * s);
+    ctx.stroke();
+  }
+}
+
+function drawDistrictDressing(ctx, world, x0, y0, vw, vh) {
+  const d = world.decorations;
+  if (!d) return;
+  // Crosswalks: zebra stripes on two arms of every visible intersection
+  // (north arm across the vertical road, west arm across the horizontal).
+  ctx.fillStyle = 'rgba(240,240,240,0.65)';
+  for (const cw of d.crosswalks) {
+    if (cw.x < x0 - 70 || cw.y < y0 - 70 || cw.x > x0 + vw + 70 || cw.y > y0 + vh + 70) continue;
+    for (let i = 0; i < 4; i++) {
+      ctx.fillRect(cw.x - 27, cw.y - 58 + i * 7, 54, 4); // stripes across the road, north arm
+      ctx.fillRect(cw.x - 58 + i * 7, cw.y - 27, 4, 54); // stripes across the road, west arm
+    }
+  }
+  // Beach towels on the sand
+  for (const t of (d.towels || [])) {
+    ctx.save(); ctx.translate(t.x, t.y); ctx.rotate(t.a || 0);
+    ctx.fillStyle = t.color; ctx.fillRect(-7, -11, 14, 22);
+    ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.fillRect(-7, -3, 14, 5);
+    ctx.restore();
+  }
+  // Beach umbrellas
+  for (const u of d.umbrellas) {
+    ctx.fillStyle = u.color;
+    ctx.beginPath(); ctx.arc(u.x, u.y, 13, Math.PI, 0); ctx.fill();
+    ctx.strokeStyle = '#6b4a2a'; ctx.beginPath(); ctx.moveTo(u.x, u.y); ctx.lineTo(u.x, u.y + 10); ctx.stroke();
+  }
+  // Palms
+  for (const p of d.palms) {
+    if (p.x < x0 - 40 || p.y < y0 - 40 || p.x > x0 + vw + 40 || p.y > y0 + vh + 40) continue;
+    drawPalm(ctx, p);
+  }
+  // Storefront / motel signs — bright rectangles with readable names
+  ctx.textAlign = 'center';
+  for (const s of d.signs) {
+    if (s.x < x0 - 90 || s.y < y0 - 40 || s.x > x0 + vw + 90 || s.y > y0 + vh + 40) continue;
+    ctx.fillStyle = s.kind === 'motel' ? '#3a1030' : '#20242c';
+    ctx.fillRect(s.x - 52, s.y - 12, 104, 24);
+    ctx.strokeStyle = s.color; ctx.lineWidth = 2; ctx.strokeRect(s.x - 52, s.y - 12, 104, 24);
+    ctx.fillStyle = s.color; ctx.font = 'bold 10px sans-serif';
+    ctx.fillText(s.text, s.x, s.y + 4);
+  }
+  // Port cranes: tall frame + jib over the docks
+  for (const cr of d.cranes) {
+    ctx.strokeStyle = cr.main ? '#f39c12' : '#7f8c8d'; ctx.lineWidth = 6;
+    ctx.beginPath();
+    ctx.moveTo(cr.x - 34, cr.y + 40); ctx.lineTo(cr.x - 34, cr.y + 40 - cr.h);
+    ctx.lineTo(cr.x + 58, cr.y + 40 - cr.h); ctx.lineTo(cr.x + 58, cr.y + 40 - cr.h + 26);
+    ctx.moveTo(cr.x + 34, cr.y + 40); ctx.lineTo(cr.x + 34, cr.y + 40 - cr.h);
+    ctx.stroke();
+    ctx.fillStyle = cr.main ? '#f39c12' : '#7f8c8d';
+    ctx.fillRect(cr.x - 42, cr.y + 34, 84, 8);
+    if (cr.main) { ctx.fillStyle = '#fff'; ctx.font = 'bold 10px sans-serif'; ctx.fillText('EXPORT', cr.x, cr.y + 58); }
+  }
 }
 
 function roundRect(ctx, x, y, w, h, r) {
@@ -50,6 +131,13 @@ function roundRect(ctx, x, y, w, h, r) {
 function drawPed(ctx, p, time) {
   ctx.save();
   ctx.translate(p.x, p.y);
+  if (p.dead) { // downed pedestrian stays on the ground, faded
+    ctx.globalAlpha = 0.55; ctx.rotate(Math.PI / 2);
+  }
+  if (p.hitFlash > 0) { // flinch ring when hit — combat reads clearly
+    ctx.strokeStyle = '#ff5b4d'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(0, 0, 14 + (0.35 - p.hitFlash) * 22, 0, Math.PI * 2); ctx.stroke();
+  }
   const bob = Math.sin(p.walkPhase) * 2;
   ctx.fillStyle = 'rgba(0,0,0,0.25)';
   ctx.beginPath(); ctx.ellipse(0, 2, 9, 6, 0, 0, Math.PI * 2); ctx.fill();
@@ -156,6 +244,9 @@ export function drawWorld(ctx, G, cam, time) {
     ctx.fillRect(b.x + 8, b.y + 8, Math.min(26, b.w - 16), Math.min(18, b.h - 16));
   }
 
+  // District dressing over the streets, under the cast
+  drawDistrictDressing(ctx, world, x0, y0, vw, vh);
+
   // Key locations
   drawPlace(ctx, world.bank.x, world.bank.y, 'BANK', '#f1c40f');
   drawPlace(ctx, world.garage.x, world.garage.y, 'GARAGE', '#3498db');
@@ -170,6 +261,16 @@ export function drawWorld(ctx, G, cam, time) {
     ctx.beginPath(); ctx.moveTo(s.x, s.y); ctx.lineTo(s.x + Math.cos(s.angle) * 14, s.y + Math.sin(s.angle) * 14); ctx.stroke();
   }
   ctx.globalAlpha = 1;
+
+  // SEARCH phase in the world: a sweeping ring on the last-seen point
+  if (G.searching && G.lastSeen) {
+    const sweep = 60 + Math.sin(time * 3) * 22;
+    ctx.strokeStyle = 'rgba(255,215,0,0.8)'; ctx.lineWidth = 2; ctx.setLineDash([8, 8]);
+    ctx.beginPath(); ctx.arc(G.lastSeen.x, G.lastSeen.y, sweep, 0, Math.PI * 2); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#ffd700'; ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText('LAST SEEN', G.lastSeen.x, G.lastSeen.y - sweep - 8);
+  }
 
   // Mission marker: pulsing beacon + ground ring
   const obj = G.currentObjective();
@@ -186,16 +287,34 @@ export function drawWorld(ctx, G, cam, time) {
     ctx.fillText('▼', obj.target.x, obj.target.y - 132);
   }
 
+  // Export drop-off ring under the main port crane
+  if (G.exportCar) {
+    const c = CFG.PORT_CRANE;
+    ctx.strokeStyle = '#2ecc71'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(c.x, c.y, c.radius * (1 + Math.sin(time * 4) * 0.05), 0, Math.PI * 2); ctx.stroke();
+    ctx.fillStyle = 'rgba(46,204,113,0.16)';
+    ctx.beginPath(); ctx.arc(c.x, c.y, c.radius, 0, Math.PI * 2); ctx.fill();
+  }
+
   // Entities
   for (const c of G.parked) drawCar(ctx, c, time);
   for (const c of G.traffic) drawCar(ctx, c, time);
   for (const c of G.police) drawCar(ctx, c, time);
+  for (const c of (G.roadblocks || [])) drawCar(ctx, c, time);
   for (const p of G.peds) drawPed(ctx, p, time);
   for (const o of G.officers) {
     ctx.save(); ctx.translate(o.x, o.y);
+    if (o.hitFlash > 0) {
+      ctx.strokeStyle = '#ff5b4d'; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(0, 0, 15, 0, Math.PI * 2); ctx.stroke();
+    }
     ctx.fillStyle = '#1f3a93'; ctx.beginPath(); ctx.arc(0, 0, 11, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = '#fff'; ctx.font = 'bold 8px sans-serif'; ctx.textAlign = 'center';
     ctx.fillText('PD', 0, 3); ctx.restore();
+    if (o.state === 'search') { // searching officers sweep with a "?" scan tag
+      ctx.fillStyle = '#ffd700'; ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText('?', o.x, o.y - 16);
+    }
   }
   if (G.player.inCar && G.player.car) drawCar(ctx, G.player.car, time);
   else drawPlayer(ctx, G.player, time);

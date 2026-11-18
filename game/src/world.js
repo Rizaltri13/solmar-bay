@@ -43,13 +43,32 @@ export function createWorld(rng) {
     });
   }
 
+  // --- District dressing: palms, beach umbrellas, storefront + motel signs,
+  // port cranes and crosswalks make each neighbourhood read at a glance ---
+  const decorations = buildDistrictDecorations(rng, roadsX, roadsY);
+
   const world = {
-    w: W, h: H, roadsX, roadsY, buildings, containers,
+    w: W, h: H, roadsX, roadsY, buildings, containers, decorations,
+    districts: CFG.DISTRICTS,
     beachX: CFG.BEACH_X,
-    port: CFG.PORT,
+    port: CFG.PORT, portCrane: CFG.PORT_CRANE,
     safehouse: CFG.SAFEHOUSE, bank: CFG.BANK, garage: CFG.GARAGE,
     hideout: CFG.HIDEOUT, delia: CFG.DELIA, spawn: CFG.SPAWN,
   };
+  world.districtAt = (x, y) => CFG.DISTRICTS.find((d) => x >= d.x && x < d.x + d.w && y >= d.y && y < d.y + d.h) || null;
+  // Line of sight: true when a building blocks the straight line a→b.
+  // Bullets and police vision both use this one occlusion test.
+  world.lineBlocked = (x1, y1, x2, y2) => {
+    const dist = Math.hypot(x2 - x1, y2 - y1);
+    const steps = Math.max(1, Math.floor(dist / 18));
+    for (let i = 1; i < steps; i++) {
+      const t = i / steps;
+      if (world.pointInBuilding(x1 + (x2 - x1) * t, y1 + (y2 - y1) * t)) return true;
+    }
+    return false;
+  };
+  world.canSee = (x1, y1, x2, y2, range = CFG.SIGHT_RANGE) =>
+    Math.hypot(x2 - x1, y2 - y1) <= range && !world.lineBlocked(x1, y1, x2, y2);
 
   world.isRoad = (x, y) => {
     if (x < 0 || y < 0 || x > W || y > H) return false;
@@ -96,6 +115,11 @@ export function createWorld(rng) {
     if (rng2.chance(0.5)) return { x: rng2.pick(roadsX) + rng2.range(-14, 14), y: rng2.range(120, H - 120) };
     return { x: rng2.range(120, W - 120), y: rng2.pick(roadsY) + rng2.range(-14, 14) };
   };
+  // A roadblock anchor: the intersection just ahead of a fleeing driver.
+  world.roadblockAhead = (x, y, angle) => {
+    const tx = x + Math.cos(angle) * 430, ty = y + Math.sin(angle) * 430;
+    return world.nearestRoadPoint(Math.max(80, Math.min(W - 80, tx)), Math.max(80, Math.min(H - 80, ty)));
+  };
   world.nearestRoadPoint = (x, y) => {
     let best = null, bd = 1e9;
     for (const rx of roadsX) for (const ry of roadsY) {
@@ -105,4 +129,30 @@ export function createWorld(rng) {
     return best;
   };
   return world;
+}
+
+// Deterministic dressing per district, generated once from the seeded RNG.
+export function buildDistrictDecorations(rng, roadsX, roadsY) {
+  const palms = [], umbrellas = [], signs = [], cranes = [], crosswalks = [];
+  // Palm trees: beach fringe, Palm Heights, and scattered road corners.
+  for (let y = 140; y < CFG.WORLD_H - 80; y += 150) palms.push({ x: CFG.BEACH_X - 26, y: y + rng.range(-18, 18), s: rng.range(0.85, 1.25) });
+  for (let i = 0; i < 26; i++) palms.push({ x: rng.range(980, 1800), y: rng.range(1280, 1760), s: rng.range(0.8, 1.2) });
+  for (const rx of roadsX) for (const ry of roadsY) if (rng.chance(0.3)) palms.push({ x: rx + 52, y: ry + 52, s: rng.range(0.75, 1.1) });
+  // Beach umbrellas in bright stripes along the sand, + towels between them.
+  const towels = [];
+  for (let i = 0; i < 14; i++) umbrellas.push({ x: CFG.BEACH_X + rng.range(14, 62), y: 180 + i * 118 + rng.range(-24, 24), color: rng.pick(['#e74c3c', '#f1c40f', '#16a085', '#e67e22', '#ecf0f1']) });
+  for (let i = 0; i < 18; i++) towels.push({ x: CFG.BEACH_X + rng.range(8, 70), y: rng.range(140, CFG.WORLD_H - 140), color: rng.pick(['#ff6b9d', '#4aa3ff', '#ffd166', '#7bd88f']), a: rng.range(-0.4, 0.4) });
+  // Storefront signs downtown + motel signs on Motel Row / the marina.
+  const downtown = CFG.SIGN_TEXTS.slice(0, 8), motels = ['MOTEL SOLMAR', 'PALM MOTEL', 'HOTEL MAR', 'MOTEL SOLMAR'];
+  downtown.forEach((text, i) => signs.push({ x: 980 + (i % 4) * 230, y: 300 + Math.floor(i / 4) * 300, text, color: rng.pick(['#ffb347', '#2ecc71', '#4aa3ff', '#ff6b9d']), kind: 'shop' }));
+  motels.forEach((text, i) => signs.push({ x: 330 + i * 150, y: 900 + (i % 2) * 260, text, color: '#ff6b9d', kind: 'motel' }));
+  signs.push({ x: 1620, y: 900, text: 'MARINA', color: '#4aa3ff', kind: 'shop' });
+  signs.push({ x: 1900, y: 300, text: 'BAY FEDERAL', color: '#f1c40f', kind: 'shop' });
+  // Port cranes over the docks (the vehicle-export drop-off sits under #1).
+  cranes.push({ x: CFG.PORT_CRANE.x, y: CFG.PORT_CRANE.y - 60, h: 120, main: true });
+  cranes.push({ x: 760, y: 1620, h: 100, main: false });
+  cranes.push({ x: 880, y: 1760, h: 110, main: false });
+  // Zebra crosswalks at every intersection.
+  for (const rx of roadsX) for (const ry of roadsY) crosswalks.push({ x: rx, y: ry });
+  return { palms, umbrellas, signs, cranes, crosswalks, towels };
 }

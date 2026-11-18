@@ -6,13 +6,16 @@ import { Input } from './input.js';
 import { AudioSys } from './audio.js';
 import { createWorld } from './world.js';
 import {
-  makeCar, spawnParked, spawnTraffic, spawnPeds, spawnPoliceCar,
+  makeCar, spawnParked, spawnTraffic, spawnPeds, spawnPoliceCar, makeOfficer,
+  makeRoadblockCar, panicTrafficCar, vehicleClass,
   driveCar, updateTraffic, updatePeds, updatePolice, updateOfficers,
 } from './entities.js';
 import {
   STORY_INTRO, MISSIONS, missionState, currentMission, currentStep,
   currentObjective, startMission, updateMissions,
+  markExportCar, updateExportActivity, trySafehouseService,
 } from './missions.js';
+import { stageShot, runSelfTest } from './staging.js';
 import { drawWorld } from './render.js';
 import { UI, drawHUD } from './ui.js';
 
@@ -38,9 +41,14 @@ const G = {
     cash: 150, ammo: CFG.START_AMMO, inCar: false, car: null,
     shootCd: 0, punchCd: 0, bustedT: 0, walkPhase: 0,
   },
-  parked: [], traffic: [], peds: [], police: [], officers: [],
+  parked: [], traffic: [], peds: [], police: [], officers: [], roadblocks: [],
   skid: [], particles: [], floatTexts: [],
   heat: 0, lastSeenT: 0, decayT: 0,
+  // Line-of-sight pursuit state: seenNow / lastSeen / searching drive the
+  // police SEARCH phase, the minimap search ring and the HUD phase label.
+  seenNow: false, lastSeen: null, unseenT: 0, searching: false, roadblockStars: 0,
+  danger: null, dangerT: 0, // last gunshot/crash position civilians flee from
+  exportCar: null, exportsDone: 0, gullT: 8, ambienceStarted: false,
   missions: missionState(),
   missionDelay: 0, policeSpawnT: 0, respawnT: 0,
   cam: { x: CFG.SPAWN.x, y: CFG.SPAWN.y }, shake: 0,
@@ -82,6 +90,8 @@ function populate() {
   G.parked.push(repo);
   // A starter car on the road by the safehouse so M1 is always doable.
   G.parked.push(makeCar(560, 320, 0, '#c0392b', 'sedan', 'parked'));
+  // One car is always marked for port export (the free-roam cash loop).
+  markExportCar(G, rng);
 }
 populate();
 G.save = G.loadSave();
@@ -110,7 +120,9 @@ function tryEnterCar() {
   c.kind = 'player';
   p.car = c; p.inCar = true; p.angle = c.angle;
   audio.tone(300, 0.08, 'square', 0.1, 500);
-  if (c.isRepo) ui.banner('Repo coupe secured — get it to the garage!');
+  if (c.isRepo) ui.banner('Repo coupe secured — get it to the garage, scratch-free!');
+  else if (c.isExport) ui.banner('Export car! Deliver it under the port crane for cash');
+  else ui.banner(`${vehicleClass(c.model).label} — ${c.model === 'coupe' ? 'quick and loose' : c.model === 'truck' || c.model === 'van' ? 'heavy, slow, grippy' : 'balanced city ride'}`);
   return true;
 }
 function exitCar() {
@@ -132,21 +144,32 @@ function shoot() {
   p.shootCd = CFG.PISTOL_RATE; p.ammo -= 1;
   audio.shoot();
   // Aim from the player's screen position toward the mouse — exact even
-  // while the camera is still settling.
-  const psx = p.x - G.cam.x + canvas.width / 2;
-  const psy = p.y - G.cam.y + canvas.height / 2;
-  const ang = Math.atan2(input.mouse.y - psy, input.mouse.x - psx);
+  // while the camera is still settling (mouse is canvas-scaled in input.js).
+  const ang = input.mouseAngleFrom(p.x, p.y, G.cam, canvas);
   p.angle = ang;
-  const ex = p.x + Math.cos(ang) * CFG.PISTOL_RANGE;
-  const ey = p.y + Math.sin(ang) * CFG.PISTOL_RANGE;
+  // Gunfire is a danger source: nearby civilians flee from THIS point.
+  G.danger = { x: p.x, y: p.y }; G.dangerT = 2.5;
+  for (const pd of G.peds) if (Math.hypot(pd.x - p.x, pd.y - p.y) < 260) pd.flee = Math.max(pd.flee, 2.5);
+  // Bullets are blocked by buildings: find the first wall along the line
+  // and cap the effective range there (occlusion).
+  let wallDist = CFG.PISTOL_RANGE;
+  for (let d = 24; d < CFG.PISTOL_RANGE; d += 14) {
+    if (world.pointInBuilding(p.x + Math.cos(ang) * d, p.y + Math.sin(ang) * d)) { wallDist = d; break; }
+  }
+  const ex = p.x + Math.cos(ang) * wallDist;
+  const ey = p.y + Math.sin(ang) * wallDist;
   // muzzle flash
   G.particles.push({ x: p.x + Math.cos(ang) * 20, y: p.y + Math.sin(ang) * 20, size: 5, color: '#ffe600', life: 0.12, max: 0.12 });
-  // hitscan: nearest ped / officer / police car near the shot line
+  if (wallDist < CFG.PISTOL_RANGE) { // wall impact sparks where the round died
+    G.particles.push({ x: ex, y: ey, size: 4, color: '#ffb347', life: 0.2, max: 0.2 });
+  }
+  // hitscan: nearest ped / officer / police car near the shot line,
+  // never past the wall that blocks the bullet.
   let best = null, bd = 1e9;
   const consider = (o, r, kind) => {
     const dx = o.x - p.x, dy = o.y - p.y;
     const along = dx * Math.cos(ang) + dy * Math.sin(ang);
-    if (along < 0 || along > CFG.PISTOL_RANGE) return;
+    if (along < 0 || along > wallDist) return;
     const perp = Math.abs(-dx * Math.sin(ang) + dy * Math.cos(ang));
     if (perp < r + 14 && along < bd) { bd = along; best = { o, kind }; }
   };
@@ -157,6 +180,7 @@ function shoot() {
     const { o, kind } = best;
     audio.hit();
     burst(o.x, o.y, '#ff5b4d', 8);
+    o.hitFlash = 0.35; // visible hit reaction on every target type
     if (kind === 'ped') {
       o.hp -= CFG.PISTOL_DAMAGE;
       o.flee = 3;
@@ -165,7 +189,7 @@ function shoot() {
       o.hp -= CFG.PISTOL_DAMAGE;
       if (o.hp <= 0) { G.officers = G.officers.filter((x) => x !== o); G.addHeat(15); }
     } else {
-      o.hp -= CFG.PISTOL_DAMAGE;
+      o.hp -= CFG.PISTOL_DAMAGE; o.damage = (o.damage || 0) + CFG.PISTOL_DAMAGE;
       if (o.hp <= 0) { o.speed = 0; o.targetSpeed = 0; burst(o.x, o.y, '#888', 16); G.addHeat(10); }
     }
   }
@@ -180,7 +204,8 @@ function punch() {
   for (const pd of G.peds) {
     if (pd.dead) continue;
     if (Math.hypot(pd.x - p.x, pd.y - p.y) < CFG.PUNCH_RANGE) {
-      pd.hp -= CFG.PUNCH_DAMAGE; pd.flee = 3;
+      pd.hp -= CFG.PUNCH_DAMAGE; pd.flee = 3; pd.hitFlash = 0.35;
+      G.danger = { x: p.x, y: p.y }; G.dangerT = 2;
       if (pd.hp <= 0) { pd.dead = true; G.addHeat(10); }
       return;
     }
@@ -201,11 +226,47 @@ function burst(x, y, color, n) {
   }
 }
 
-// ---------- wanted / police ----------
+// ---------- wanted / police: LOS pursuit → SEARCH → roadblocks ----------
 function policeDesired() {
   const s = G.wantedStars();
   return { cars: s, officers: s >= 1 ? Math.min(3, s) : 0 };
 }
+
+// One vision test per frame, shared by every police unit: Mara is "seen"
+// only inside sight range with a clear line (buildings break sight), or
+// point-blank. Breaking sight starts the SEARCH phase.
+export function computeVision(pos, dt = 1 / 60) {
+  let seen = false;
+  const units = [...G.police, ...G.officers, ...G.roadblocks];
+  for (const u of units) {
+    const d = Math.hypot(u.x - pos.x, u.y - pos.y);
+    if (d < 70) { seen = true; break; }
+    if (d <= CFG.SIGHT_RANGE && !world.lineBlocked(u.x, u.y, pos.x, pos.y)) { seen = true; break; }
+  }
+  if (seen) {
+    G.seenNow = true; G.lastSeen = { x: pos.x, y: pos.y }; G.unseenT = 0;
+  } else {
+    G.seenNow = false; G.unseenT += dt;
+  }
+  G.searching = !seen && G.wantedStars() > 0 && !!G.lastSeen && G.unseenT > CFG.SEARCH_ENTER_TIME;
+  return { seen, lastSeen: G.lastSeen };
+}
+
+function spawnRoadblocksIfNeeded(pos) {
+  const stars = G.wantedStars();
+  if (stars < CFG.ROADBLOCK_STARS) { G.roadblocks = []; G.roadblockStars = 0; return; }
+  if (G.roadblockStars === stars && G.roadblocks.length >= 2) return;
+  G.roadblockStars = stars;
+  const angle = (G.player.inCar && G.player.car) ? G.player.car.angle : G.player.angle;
+  const anchor = world.roadblockAhead(pos.x, pos.y, angle);
+  G.roadblocks = [
+    makeRoadblockCar(world, anchor.x - 16, anchor.y, angle + Math.PI / 2),
+    makeRoadblockCar(world, anchor.x + 16, anchor.y + 10, angle + Math.PI / 2),
+  ];
+  if (stars >= 5) G.roadblocks.push(makeRoadblockCar(world, anchor.x, anchor.y - 26, angle + Math.PI / 2));
+  ui.banner('ROADBLOCK ahead — break through or detour!');
+}
+
 function updateWanted(dt) {
   const pos = G.playerPos();
   const desired = policeDesired();
@@ -218,27 +279,27 @@ function updateWanted(dt) {
       y: Math.max(60, Math.min(world.h - 60, pos.y + Math.sin(a) * 520)),
     };
     const snap = world.nearestRoadPoint(raw.x, raw.y); // spawn on a road, never inside a block
-    G.police.push(spawnPoliceCar(world, snap.x, snap.y));
+    const unit = spawnPoliceCar(world, snap.x, snap.y);
+    if (G.lastSeen) unit.lastSeen = { ...G.lastSeen };
+    G.police.push(unit);
   }
   if (G.officers.length < desired.officers && G.policeSpawnT <= 0) {
-    G.officers.push({
-      id: 9000 + G.officers.length, x: pos.x + rng.range(-380, 380), y: pos.y + rng.range(-380, 380),
-      angle: 0, hp: 60,
-    });
+    const snap = world.nearestRoadPoint(pos.x + rng.range(-380, 380), pos.y + rng.range(-380, 380));
+    G.officers.push(makeOfficer(9000 + G.officers.length + Math.floor(rng.range(0, 400)), snap.x, snap.y));
   }
-  // Hidden? decay heat when no police can see the player.
-  const nearestPolice = Math.min(
-    ...G.police.map((c) => Math.hypot(c.x - pos.x, c.y - pos.y)), 1e9,
-    ...G.officers.map((o) => Math.hypot(o.x - pos.x, o.y - pos.y)), 1e9,
-  );
-  if (nearestPolice > 380) {
+  spawnRoadblocksIfNeeded(pos);
+  // Heat decay: slow in the open, FAST while police are searching unseen.
+  if (!G.seenNow && G.wantedStars() > 0) {
     G.decayT += dt;
-    if (G.decayT > CFG.DECAY_DELAY) G.heat = Math.max(0, G.heat - CFG.DECAY_RATE * dt);
+    const rate = G.searching ? CFG.SEARCH_DECAY_RATE : CFG.DECAY_RATE;
+    const delay = G.searching ? 0.8 : CFG.DECAY_DELAY;
+    if (G.decayT > delay) G.heat = Math.max(0, G.heat - rate * dt);
   } else { G.decayT = 0; G.lastSeenT = 0; }
   if (G.wantedStars() === 0) {
     // heat gone: remaining units give up and drive off
     G.police = G.police.filter((c) => Math.hypot(c.x - pos.x, c.y - pos.y) < 900);
     if (G.police.length === 0) G.officers = [];
+    G.roadblocks = []; G.roadblockStars = 0; G.searching = false; G.lastSeen = null;
     audio.stopSiren();
   } else audio.startSiren();
 }
@@ -264,7 +325,8 @@ function respawn() {
   p.inCar = false;
   p.x = CFG.SAFEHOUSE.x; p.y = CFG.SAFEHOUSE.y; p.hp = CFG.PLAYER_HP;
   p.ammo = Math.max(p.ammo, CFG.START_AMMO);
-  G.setHeat(0); G.police = []; G.officers = [];
+  G.setHeat(0); G.police = []; G.officers = []; G.roadblocks = [];
+  G.searching = false; G.lastSeen = null; G.unseenT = 0; audio.stopEngine();
   G.cam.x = p.x; G.cam.y = p.y;
   ui.hideEnd();
   G.mode = 'play';
@@ -304,7 +366,29 @@ function update(dt) {
       audio.crash(); G.shake = Math.min(14, spd / 40);
       burst(p.car.x, p.car.y, '#ffb347', 10);
       p.hp -= Math.max(2, spd / 60);
+      G.danger = { x: p.car.x, y: p.car.y }; G.dangerT = 2;
+      // Repo Job: dents in the marked coupe eat the careful-driving bonus.
+      if (p.car.isRepo) G.missions.repoDamage += Math.max(1, spd / 90);
+      p.car.damage = Math.min(100, (p.car.damage || 0) + spd / 22);
     });
+    // Car-to-car impacts: traffic panics and swerves, both cars take damage.
+    for (const other of [...G.traffic, ...G.parked]) {
+      if (Math.abs(p.car.speed) > 90 && Math.hypot(other.x - p.car.x, other.y - p.car.y) < 40) {
+        panicTrafficCar(other, p.car.x, p.car.y);
+        audio.honk(); audio.crash();
+        burst(other.x, other.y, '#ffb347', 6);
+        p.car.speed *= 0.55; other.speed = (other.speed || 0) + 60;
+        if (p.car.isRepo) G.missions.repoDamage += 2;
+        G.danger = { x: other.x, y: other.y }; G.dangerT = 2;
+      }
+    }
+    // Roadblocks are solid: hitting one hurts and slows Mara hard.
+    for (const rb of G.roadblocks) {
+      if (Math.hypot(rb.x - p.car.x, rb.y - p.car.y) < 42 && Math.abs(p.car.speed) > 60) {
+        audio.crash(); G.shake = Math.max(G.shake, 8); p.hp -= 4;
+        burst(rb.x, rb.y, '#9fb7ff', 8); p.car.speed *= -0.2;
+      }
+    }
     if (res.drifting) {
       const bx = p.car.x - Math.cos(p.car.angle) * 18, by = p.car.y - Math.sin(p.car.angle) * 18;
       G.skid.push({ x: bx, y: by, angle: p.car.angle, life: 1 });
@@ -353,28 +437,63 @@ function update(dt) {
     audio.ensure();
     if (p.inCar) exitCar(); else tryEnterCar();
   }
+  if (input.wasPressed('KeyB')) { audio.ensure(); trySafehouseService(G); }
 
-  // world life
-  const allCars = [...G.parked, ...G.traffic, ...G.police, ...(p.car ? [p.car] : [])];
-  updateTraffic(G.traffic, world, dt, rng, allCars);
-  updatePeds(G.peds, world, dt, rng, null);
-  updatePolice(G.police, G.playerPos(), dt, world);
-  updateOfficers(G.officers, G.playerPos(), dt, world);
+  // Ambience + engine hum (started lazily after the first user gesture)
+  if (!G.ambienceStarted && audio.ctx) { audio.startAmbience(); G.ambienceStarted = true; }
+  audio.updateEngine(p.inCar && p.car ? p.car.speed / CFG.CAR_MAX_SPEED : 0, !!(p.inCar && p.car));
+  G.gullT -= dt;
+  if (G.gullT <= 0) { G.gullT = rng.range(9, 20); if (audio.ctx && !audio.muted) audio.gull(); }
+
+  // Vision is computed BEFORE the AI moves, so pursuit/search share it.
+  const vision = computeVision(G.playerPos(), dt);
+  G.dangerT = Math.max(0, G.dangerT - dt);
+  const dangerNow = G.dangerT > 0 ? G.danger : null;
+
+  // world life — density is kept up NEAR the player in the respawn step below
+  const allCars = [...G.parked, ...G.traffic, ...G.police, ...G.roadblocks, ...(p.car ? [p.car] : [])];
+  updateTraffic(G.traffic, world, dt, rng, allCars, G.peds);
+  updatePeds(G.peds, world, dt, rng, dangerNow, allCars);
+  updatePolice(G.police, G.playerPos(), dt, world, vision);
+  updateOfficers(G.officers, G.playerPos(), dt, world, vision);
+  // Officers return fire at range (flag set by their AI when LOS is clear)
+  for (const o of G.officers) {
+    if (!o.wantsFire) continue;
+    o.wantsFire = false;
+    audio.officerShot();
+    const tp = G.playerPos();
+    G.particles.push({ x: o.x, y: o.y, size: 3, color: '#ffd700', life: 0.1, max: 0.1 });
+    if (!world.lineBlocked(o.x, o.y, tp.x, tp.y)) {
+      p.hp -= p.inCar ? rng.range(1, 3) : rng.range(3, 7); // a car body soaks some of it
+      G.shake = Math.max(G.shake, 2);
+      burst(tp.x, tp.y, '#ff5b4d', 4);
+    }
+  }
   updateWanted(dt);
+  updateExportActivity(G, dt, rng);
 
-  // keep the streets populated
+  // Keep the streets DENSE NEAR THE PLAYER: count only life within 700px,
+  // top it up just outside view, and recycle anything stranded far away.
   G.respawnT -= dt;
   if (G.respawnT <= 0) {
-    G.respawnT = 2;
+    G.respawnT = 1.2;
     const pos = G.playerPos();
-    if (G.traffic.length < 12) {
+    const nearTraffic = G.traffic.filter((c) => Math.hypot(c.x - pos.x, c.y - pos.y) < 700);
+    if (nearTraffic.length < 7) {
       const c = spawnTraffic(world, rng, 1)[0];
-      if (Math.hypot(c.x - pos.x, c.y - pos.y) > 500) G.traffic.push(c);
+      const snap = world.nearestRoadPoint(pos.x + rng.range(-620, 620), pos.y + rng.range(-620, 620));
+      c.x = snap.x + rng.range(-12, 12); c.y = snap.y + rng.range(-12, 12);
+      if (Math.hypot(c.x - pos.x, c.y - pos.y) > 420) G.traffic.push(c);
     }
-    if (G.peds.filter((x) => !x.dead).length < 14) {
+    const nearPeds = G.peds.filter((x) => !x.dead && Math.hypot(x.x - pos.x, x.y - pos.y) < 650);
+    if (nearPeds.length < 9) {
       const pd = spawnPeds(world, rng, 1)[0];
-      if (Math.hypot(pd.x - pos.x, pd.y - pos.y) > 400) G.peds.push(pd);
+      pd.x = pos.x + rng.range(-520, 520); pd.y = pos.y + rng.range(-520, 520);
+      if (!world.pointInBuilding(pd.x, pd.y) && Math.hypot(pd.x - pos.x, pd.y - pos.y) > 300) G.peds.push(pd);
     }
+    // Recycle far-away life so the totals stay bounded while density holds.
+    G.traffic = G.traffic.filter((c) => Math.hypot(c.x - pos.x, c.y - pos.y) < 1500 || G.traffic.length <= 14);
+    if (G.peds.length > 30) G.peds = G.peds.filter((x) => x.dead || Math.hypot(x.x - pos.x, x.y - pos.y) < 1200);
   }
 
   // particles + float texts + skid decay
@@ -397,10 +516,18 @@ function update(dt) {
 
   if (p.hp <= 0) { endRun('wasted'); return; }
 
-  // camera follows, with shake
+  // Camera follows WITH LOOK-AHEAD: while driving it leans into the
+  // velocity so the road ahead (and the chase) stays in frame; on foot it
+  // leans a little toward the aim.
   const pos = G.playerPos();
-  G.cam.x += (pos.x - G.cam.x) * Math.min(1, dt * 5);
-  G.cam.y += (pos.y - G.cam.y) * Math.min(1, dt * 5);
+  let lookX = 0, lookY = 0;
+  if (p.inCar && p.car) {
+    lookX = Math.cos(p.car.angle) * p.car.speed * 0.42;
+    lookY = Math.sin(p.car.angle) * p.car.speed * 0.42;
+  }
+  const camTX = pos.x + lookX, camTY = pos.y + lookY;
+  G.cam.x += (camTX - G.cam.x) * Math.min(1, dt * 5);
+  G.cam.y += (camTY - G.cam.y) * Math.min(1, dt * 5);
   G.shake = Math.max(0, G.shake - dt * 30);
 
   input.endFrame();
@@ -454,130 +581,26 @@ function frame(now) {
   requestAnimationFrame(frame);
 }
 
-// ---------- deterministic screenshot staging ----------
-function stageShot(name) {
-  // Every shot is built through the game's own systems, then held.
-  if (name === 'title') {
-    G.mode = 'title'; ui.showTitle(null);
-    const intro = document.getElementById('story-line');
-    if (intro) intro.textContent = STORY_INTRO;
-    return;
-  }
-  startGame(false);
-  if (name === 'chase') {
-    // Mara mid-chase: driving, 3 stars, two police cars closing in.
-    const car = G.parked.find((c) => !c.isRepo) || G.parked[0];
-    G.player.x = car.x; G.player.y = car.y;
-    tryEnterCar();
-    G.player.car.x = 1280; G.player.car.y = 960; G.player.car.angle = 0; G.player.car.speed = 380;
-    G.setHeat(3 * CFG.HEAT_PER_STAR);
-    G.police.push(spawnPoliceCar(world, 1000, 960));
-    G.police.push(spawnPoliceCar(world, 1040, 960));
-    G.police.push(spawnPoliceCar(world, 1440, 960));
-    G.missions.idx = 2; G.missions.step = 0; G.missions.started = true;
-    G.autopilot = true; G.autopilotTarget = { x: 1920, y: 960 };
-    G.cam.x = G.player.car.x; G.cam.y = G.player.car.y;
-  } else if (name === 'mission') {
-    // Courier run in progress: Mara driving toward the marina drop.
-    const car = G.parked.find((c) => !c.isRepo) || G.parked[0];
-    G.player.x = car.x; G.player.y = car.y;
-    tryEnterCar();
-    G.player.car.x = 1280; G.player.car.y = 960; G.player.car.angle = Math.PI / 2; G.player.car.speed = 300;
-    G.missions.idx = 1; G.missions.step = 0; G.missions.started = true; G.missions.timer = 74;
-    G.autopilot = true; G.autopilotTarget = { x: 1920, y: 960 };
-    G.cam.x = G.player.car.x; G.cam.y = G.player.car.y;
-  } else if (name === 'foot') {
-    // On foot on a busy street: traffic, pedestrians, one star, officer closing.
-    // (Away from Delia's corner so M1 does not auto-complete on staging.)
-    G.player.x = 960; G.player.y = 960; G.player.angle = 0;
-    G.player.ammo = 18;
-    G.setHeat(1 * CFG.HEAT_PER_STAR);
-    G.officers.push({ id: 9001, x: 1020, y: 1000, angle: Math.PI, hp: 60 });
-    G.missions.idx = 0; G.missions.step = 1; G.missions.started = true;
-    // pull a few pedestrians and a traffic car into frame
-    for (let i = 0; i < 4; i++) {
-      const pd = G.peds[i];
-      if (pd) { pd.x = 900 + i * 46; pd.y = 1010; pd.dead = false; }
-    }
-    const tc = G.traffic[0];
-    if (tc) { tc.x = 800; tc.y = 960; tc.angle = 0; tc.speed = 60; }
-    G.cam.x = G.player.x; G.cam.y = G.player.y;
-  }
-  // Staged shots hold the scene: no story dialogue over the frame.
-  G.ui.dialogueEl.classList.add('hidden');
-  G.ui._dialogueT = 0;
-  ui.banner(currentObjective(G.missions).text);
-}
-
-// ---------- scripted self-test ----------
-function runSelfTest() {
-  const results = {};
-  const step = (n) => { for (let i = 0; i < n; i++) update(1 / 60); };
-  try {
-    startGame(false);
-    results.started = G.mode === 'play';
-    step(60);
-    // walk to the starter car and jack it
-    const car = G.parked[G.parked.length - 1];
-    const sx = car.x, sy = car.y;
-    G.player.x = car.x; G.player.y = car.y;
-    results.enterCar = tryEnterCar();
-    G.scriptInput = { x: 0, y: -1, handbrake: false };
-    step(240); // drive ~4s
-    results.drove = Math.abs(G.player.car.speed) > 50;
-    results.carMoved = Math.hypot(G.player.car.x - sx, G.player.car.y - sy) > 50;
-    // trigger a 2-star chase (60 heat: safely above the 50 boundary)
-    G.addHeat(60);
-    step(240);
-    results.wanted = G.wantedStars();
-    results.policeSpawned = G.police.length > 0;
-    results.officersSpawned = G.officers.length > 0;
-    // finish M1: drive to Delia's corner
-    G.player.car.x = CFG.DELIA.x; G.player.car.y = CFG.DELIA.y; G.player.car.speed = 0;
-    G.scriptInput = null;
-    step(30);
-    results.missionAdvanced = G.missions.idx >= 1;
-    results.missionObjective = currentObjective(G.missions).text;
-    // on-foot combat: exit, shoot at a pedestrian placed in front of Mara
-    exitCar();
-    G.player.angle = 0;
-    const pd = G.peds.find((x) => !x.dead) || G.peds[0];
-    pd.x = G.player.x + 120; pd.y = G.player.y; pd.hp = 30;
-    // Aim the mouse exactly along the player->pedestrian line.
-    input.mouse.x = (G.player.x - G.cam.x) + canvas.width / 2 + 120;
-    input.mouse.y = (G.player.y - G.cam.y) + canvas.height / 2;
-    G.player.shootCd = 0;
-    shoot();
-    results.shotFired = G.player.ammo < CFG.START_AMMO;
-    results.targetHit = pd.hp < 30;
-    // punch + wanted decay + save
-    G.player.punchCd = 0; punch();
-    G.setHeat(0); step(120);
-    G.saveBest();
-    results.saveWritten = !!localStorage.getItem('solmarbay-save');
-    results.finalCash = Math.floor(G.player.cash);
-    results.errors = G.errors;
-    results.pass = results.started && results.enterCar && results.drove && results.carMoved &&
-      results.wanted >= 2 && results.policeSpawned && results.missionAdvanced &&
-      results.shotFired && results.targetHit && results.saveWritten && G.errors.length === 0;
-  } catch (e) {
-    G.errors.push('selftest exception: ' + (e && e.message));
-    results.pass = false; results.errors = G.errors;
-  }
-  const label = (results.pass ? 'SELFTEST PASS' : 'SELFTEST FAIL') +
-    ' missionIdx=' + G.missions.idx + ' wanted=' + G.wantedStars() +
-    ' police=' + G.police.length + ' errors=' + G.errors.length;
-  document.title = label;
-  debugEl.textContent = JSON.stringify(results);
-  debugEl.dataset.done = '1';
-}
+// ---------- staging + self-test live in staging.js ----------
+// main.js hands staging the verbs it needs; staging stages scenes and
+// drives the scripted play-through through these exact functions.
+const stagingHelpers = {
+  startGame, tryEnterCar, exitCar, shoot, punch, update,
+  spawnPoliceCar, makeOfficer, startMission: () => startMission(G),
+  storyIntro: STORY_INTRO,
+  saveBest: () => G.saveBest(),
+  aimAtScreenOffset: (dx, dy) => {
+    input.mouse.x = (G.player.x - G.cam.x) + canvas.width / 2 + dx;
+    input.mouse.y = (G.player.y - G.cam.y) + canvas.height / 2 + dy;
+  },
+};
 
 // ---------- boot ----------
 if (selftest) {
   G.mode = 'play'; // self-test drives update() directly
-  setTimeout(runSelfTest, 300);
+  setTimeout(() => runSelfTest(G, stagingHelpers), 300);
 } else if (shot) {
-  stageShot(shot);
+  stageShot(G, stagingHelpers, shot);
 } else {
   ui.showTitle(G.save);
   const intro = document.getElementById('story-line');
