@@ -26,7 +26,14 @@ Open `game/index.html` in a desktop browser, or serve the folder:
 
 ```
 node serve.ts          # http://localhost:8080
+PORT=9090 node serve.ts  # override the port
 ```
+
+`serve.ts` (v3) is a proper little static server, not just a file dump:
+it sends a **content-based ETag** (SHA-256 of the file bytes) with
+`Cache-Control` on every response and answers `If-None-Match` with
+`304`, **gzips text assets** (HTML/JS/CSS/JSON/SVG) when the client
+accepts it, supports `HEAD`, and reads its port from `PORT`.
 
 - **Walk / drive** — WASD or arrow keys (Shift to run, Space is the handbrake while driving)
 - **Enter / exit / steal a car** — E (walk up to a parked or traffic car)
@@ -48,7 +55,19 @@ minimap tints each district and draws a dashed route line to your objective.
 
 Street life is dense and reactive: traffic follows the lanes, turns at
 intersections, brakes for pedestrians on crossings and panics — swerving,
-honking, dented — when you hit it. Pedestrians stroll the sidewalks, cross
+honking, dented — when you hit it. Leave a driver blocked long enough
+and they honk on their own, each with a slightly different horn.
+
+## A day in Solmar Bay (v3)
+
+The light is alive now: a slow **day cycle** (one full turn = 5 minutes)
+drifts the whole city from dawn through morning and midday into
+**golden hour**, **dusk** and **nightfall**, tinting every frame. The HUD
+shows the in-game clock and phase under the district name, a soft chime
+marks each phase change, and the pause screen reports your session —
+jobs done, exports delivered, cash earned and time played. Sessions open
+in late-afternoon gold; staged screenshots pin golden hour exactly, so
+the handed-in frames are reproducible. Pedestrians stroll the sidewalks, cross
 at the crosswalks, dodge cars bearing down on them, and flee from the
 actual position of a gunshot or crash, not from Mara in the abstract.
 
@@ -100,8 +119,9 @@ you left off.
 | `game/src/world.js` | City generation: roads, blocks, buildings, beach, port + collision |
 | `game/src/entities.js` | Cars, traffic AI, pedestrians, police chase and officers |
 | `game/src/missions.js` | Story, dialogue, and the five-mission step machine |
-| `game/src/render.js` | Painting the city, the cast, skid marks, particles, sunset light |
-| `game/src/ui.js` | HUD, live minimap with district tints + route line, and the title / pause / busted menus |
+| `game/src/render.js` | Painting the city, the cast, skid marks, particles, and the day-cycle light (`dayPhaseAt`) |
+| `game/src/ui.js` | HUD with day clock, live minimap with district tints + route line, and the title / pause (with session stats) / busted menus |
+| `serve.ts` | Local dev server (not shipped in the dossier): ETag + Cache-Control + gzip + `PORT` override |
 | `game/src/staging.js` | The deterministic screenshot stager (`stageShot`) and the scripted self-test (`runSelfTest`) |
 | `game/src/main.js` | The canvas, the clock, combat, wanted, screen flow — wires staging in through a small helpers object |
 
@@ -113,7 +133,9 @@ and handed in unedited. `game/?selftest=1` runs a scripted play-through
 the pistol, verify a bullet is blocked by a building, break line of sight
 until the police enter their SEARCH phase, deliver an export car to the
 port crane for its payout, and run the first courier pickup) and reports
-PASS/FAIL in the page title.
+PASS/FAIL in the page title. The v3 checks also confirm the day cycle
+advances in play, its clock renders as `HH:MM`, and the screenshot light
+pins exactly to golden hour.
 
 ## Handing it in
 

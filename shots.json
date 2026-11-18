@@ -1,13 +1,13 @@
 {
  "format": "jpeg",
  "maxBytes": 262144,
- "note": "Real frames of the game, staged deterministically through the game's own systems (?shot=<name>&seed=1) and captured in headless Chromium, unedited.",
+ "note": "Real frames of the game, staged deterministically through the game's own systems (?shot=<name>&seed=1) and captured in headless Chromium, unedited. v3: every frame is pinned to golden hour (dayT 0.66) by staging.pinShotLight so the day-cycle light is identical across captures.",
  "size": "1280x720",
  "shots": [
   {
    "file": "1-chase.jpg",
    "url": "http://localhost:8080/?shot=chase&seed=1",
-   "description": "Cover: Mara driving mid-chase in Palm Heights \u2014 palm trees and district signs in frame, three wanted stars with PURSUIT label, three police cars closing in, traffic and pedestrians, HUD, route line and minimap with the Heat objective"
+   "description": "Cover: Mara driving mid-chase in Palm Heights under pinned golden-hour light \u2014 palm trees and district signs in frame, three wanted stars with PURSUIT label, three police cars closing in, traffic and pedestrians, HUD with the day-cycle clock, route line and minimap with the Heat objective"
   },
   {
    "file": "2-title.jpg",

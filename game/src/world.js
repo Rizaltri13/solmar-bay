@@ -56,11 +56,23 @@ export function createWorld(rng) {
     hideout: CFG.HIDEOUT, delia: CFG.DELIA, spawn: CFG.SPAWN,
   };
   world.districtAt = (x, y) => CFG.DISTRICTS.find((d) => x >= d.x && x < d.x + d.w && y >= d.y && y < d.y + d.h) || null;
+  // Distance to the nearest road centre-line (0 = on a road). Traffic
+  // honking and ped crossing checks both want a cheap "near traffic" test
+  // without re-deriving the grid each time.
+  world.distanceToRoad = (x, y) => {
+    let best = 1e9;
+    for (const rx of roadsX) best = Math.min(best, Math.abs(x - rx));
+    for (const ry of roadsY) best = Math.min(best, Math.abs(y - ry));
+    return best;
+  };
+  world.nearRoad = (x, y, slack = 10) => world.distanceToRoad(x, y) <= CFG.ROAD_W / 2 + slack;
   // Line of sight: true when a building blocks the straight line a→b.
   // Bullets and police vision both use this one occlusion test.
   world.lineBlocked = (x1, y1, x2, y2) => {
     const dist = Math.hypot(x2 - x1, y2 - y1);
-    const steps = Math.max(1, Math.floor(dist / 18));
+    // 12px steps (was 18): a thin building corner on a long sight line
+    // could slip between samples and leak vision/bullets through it.
+    const steps = Math.max(1, Math.floor(dist / 12));
     for (let i = 1; i < steps; i++) {
       const t = i / steps;
       if (world.pointInBuilding(x1 + (x2 - x1) * t, y1 + (y2 - y1) * t)) return true;
@@ -135,8 +147,9 @@ export function createWorld(rng) {
 export function buildDistrictDecorations(rng, roadsX, roadsY) {
   const palms = [], umbrellas = [], signs = [], cranes = [], crosswalks = [];
   // Palm trees: beach fringe, Palm Heights, and scattered road corners.
-  for (let y = 140; y < CFG.WORLD_H - 80; y += 150) palms.push({ x: CFG.BEACH_X - 26, y: y + rng.range(-18, 18), s: rng.range(0.85, 1.25) });
-  for (let i = 0; i < 26; i++) palms.push({ x: rng.range(980, 1800), y: rng.range(1280, 1760), s: rng.range(0.8, 1.2) });
+  // (v3: jitter()/angle-adjacent helpers keep the scatter readable.)
+  for (let y = 140; y < CFG.WORLD_H - 80; y += 150) palms.push({ x: CFG.BEACH_X - 26, y: rng.jitter(y, 18), s: rng.range(0.85, 1.25) });
+  for (let i = 0; i < 26; i++) palms.push({ x: rng.range(980, 1800), y: rng.range(1280, 1760), s: rng.clampedRange(0.8, 1.2, 0.8, 1.2) });
   for (const rx of roadsX) for (const ry of roadsY) if (rng.chance(0.3)) palms.push({ x: rx + 52, y: ry + 52, s: rng.range(0.75, 1.1) });
   // Beach umbrellas in bright stripes along the sand, + towels between them.
   const towels = [];

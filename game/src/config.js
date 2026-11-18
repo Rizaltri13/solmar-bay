@@ -30,6 +30,22 @@ export const CFG = {
   PUNCH_RATE: 0.45,
   START_AMMO: 24,
 
+  // Day cycle (v3): game time drifts through a slow coastal day. dayT is
+  // normalised 0..1 (0 = dawn). The tint is a pure function of dayT so
+  // staged screenshots can pin an exact, reproducible light.
+  DAY_CYCLE_SECONDS: 300, // one full Solmar day: five unhurried minutes
+  DAY_START: 0.62, // sessions open in late-afternoon gold
+  DAY_PHASES: [
+    { at: 0.0, label: 'DAWN', tint: 'rgba(255,166,88,0.14)' },
+    { at: 0.22, label: 'MORNING', tint: 'rgba(255,214,140,0.05)' },
+    { at: 0.45, label: 'MIDDAY', tint: 'rgba(255,255,255,0)' },
+    { at: 0.62, label: 'GOLDEN HOUR', tint: 'rgba(255,170,80,0.13)' },
+    { at: 0.78, label: 'DUSK', tint: 'rgba(122,62,148,0.20)' },
+    { at: 0.9, label: 'NIGHTFALL', tint: 'rgba(18,28,72,0.26)' },
+  ],
+  TRAFFIC_HONK_AFTER: 1.1, // seconds blocked before a driver honks (entities)
+  TRAFFIC_HONK_COOLDOWN: 2.8,
+
   // Wanted — pursuit is line-of-sight based, with a SEARCH phase
   HEAT_PER_STAR: 25,
   MAX_HEAT: 125,

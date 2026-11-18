@@ -57,12 +57,19 @@ export const MISSIONS = [
   },
 ];
 
+// One place formats cash for banners/dialogue so amounts never drift
+// between "$400", "400 dollars" and bare numbers across the game.
+export function formatCash(amount) {
+  return '$' + Math.floor(amount).toLocaleString('en-US');
+}
+
 export function missionState() {
   return {
     idx: 0, step: 0, timer: 0, holdT: 0, done: false, storyDone: false, started: false,
     packages: 0, // courier parcels currently on board
     repoDamage: 0, // damage taken while driving the repo coupe (cuts the bonus)
     vaultStage: 0, // bank vault locks cracked so far
+    completedCount: 0, // jobs finished this session (pause stats panel)
   };
 }
 
@@ -108,8 +115,10 @@ function completeMission(G) {
     else G.ui.dialogue('DELIA: "Scratch-free. Full fee, plus my respect."', 'DELIA ROOK');
   }
   G.player.cash += reward;
+  if (G.stats) { G.stats.cashEarned += reward; G.stats.missionsCompleted += 1; }
+  ms.completedCount += 1;
   G.player.ammo = Math.max(G.player.ammo, CFG.START_AMMO);
-  G.ui.banner(`Job done — +$${reward}`);
+  G.ui.banner(`Job done — +${formatCash(reward)}`);
   // The repo job already spoke its scratch verdict above; don't talk over it.
   if (!(m && m.id === 'm4')) {
     G.ui.dialogue(`DELIA: "Clean work, Mara. $${reward} is yours. Next job when you're ready."`, 'DELIA ROOK');
@@ -230,6 +239,7 @@ export function updateExportActivity(G, dt, rng) {
     const c = CFG.PORT_CRANE;
     if (Math.hypot(p.car.x - c.x, p.car.y - c.y) < c.radius) {
       p.cash += CFG.EXPORT_REWARD;
+      if (G.stats) { G.stats.cashEarned += CFG.EXPORT_REWARD; G.stats.exportsDone += 1; }
       G.exportsDone = (G.exportsDone || 0) + 1;
       G.addPickupText(p.car.x, p.car.y - 34, `EXPORT +$${CFG.EXPORT_REWARD}`, '#2ecc71');
       G.ui.banner(`Vehicle exported — +$${CFG.EXPORT_REWARD} (total exports: ${G.exportsDone})`);
@@ -250,13 +260,16 @@ export function updateExportActivity(G, dt, rng) {
 export function trySafehouseService(G) {
   const p = G.player;
   const s = CFG.SAFEHOUSE;
-  if (Math.hypot(p.x - s.x, p.y - s.y) > CFG.SAFEHOUSE_SERVICE_RADIUS && !p.inCar) return false;
+  // Order matters: the old first line mixed the distance and in-car
+  // checks with &&, which read as if a driver far away could rest.
+  // Resting is on foot, at the safehouse — check those separately.
   if (p.inCar) return false;
-  if (p.cash < CFG.SAFEHOUSE_SERVICE_COST) { G.ui.banner(`Safehouse rest costs $${CFG.SAFEHOUSE_SERVICE_COST} — cash short`); return false; }
+  if (Math.hypot(p.x - s.x, p.y - s.y) > CFG.SAFEHOUSE_SERVICE_RADIUS) return false;
+  if (p.cash < CFG.SAFEHOUSE_SERVICE_COST) { G.ui.banner(`Safehouse rest costs ${formatCash(CFG.SAFEHOUSE_SERVICE_COST)} — cash short`); return false; }
   if (p.hp >= CFG.PLAYER_HP && p.ammo >= CFG.START_AMMO) { G.ui.banner('Already fresh — save your cash'); return false; }
   p.cash -= CFG.SAFEHOUSE_SERVICE_COST;
   p.hp = CFG.PLAYER_HP; p.ammo = Math.max(p.ammo, CFG.START_AMMO) + 12;
-  G.ui.banner(`Rested at the safehouse — health + ammo refilled (-$${CFG.SAFEHOUSE_SERVICE_COST})`);
+  G.ui.banner(`Rested at the safehouse — health + ammo refilled (-${formatCash(CFG.SAFEHOUSE_SERVICE_COST)})`);
   G.audio.pickup();
   return true;
 }

@@ -16,7 +16,7 @@ import {
   markExportCar, updateExportActivity, trySafehouseService,
 } from './missions.js';
 import { stageShot, runSelfTest } from './staging.js';
-import { drawWorld } from './render.js';
+import { drawWorld, dayPhaseAt } from './render.js';
 import { UI, drawHUD } from './ui.js';
 
 const canvas = document.getElementById('game');
@@ -49,6 +49,10 @@ const G = {
   seenNow: false, lastSeen: null, unseenT: 0, searching: false, roadblockStars: 0,
   danger: null, dangerT: 0, // last gunshot/crash position civilians flee from
   exportCar: null, exportsDone: 0, gullT: 8, ambienceStarted: false,
+  // Day cycle (v3) + session stats for the pause panel. dayT advances
+  // only while playing, so menus and staged shots hold their light.
+  dayT: CFG.DAY_START, dayPhaseIdx: -1,
+  stats: { missionsCompleted: 0, exportsDone: 0, cashEarned: 0, timePlayed: 0 },
   missions: missionState(),
   missionDelay: 0, policeSpawnT: 0, respawnT: 0,
   cam: { x: CFG.SPAWN.x, y: CFG.SPAWN.y }, shake: 0,
@@ -338,6 +342,12 @@ function update(dt) {
   G.time += dt;
   ui.tick(dt);
   if (G.mode !== 'play') return;
+  // Day cycle + session clock advance only in play (see G init note).
+  G.dayT = (G.dayT + dt / CFG.DAY_CYCLE_SECONDS) % 1;
+  G.stats.timePlayed += dt;
+  const phaseIdx = dayPhaseAt(G.dayT).index;
+  if (G.dayPhaseIdx >= 0 && phaseIdx !== G.dayPhaseIdx && audio.ctx && !audio.muted) audio.dayChime();
+  G.dayPhaseIdx = phaseIdx;
 
   const p = G.player;
   p.shootCd = Math.max(0, p.shootCd - dt);
@@ -399,11 +409,12 @@ function update(dt) {
       if (Math.hypot(pc.x - p.car.x, pc.y - p.car.y) < 44) {
         p.hp -= 5 * dt; G.shake = Math.max(G.shake, 3);
         pc.speed *= 0.6;
-        if (Math.random() < dt * 2) burst(pc.x, pc.y, '#9fb7ff', 4);
+        if (rng.next() < dt * 2) burst(pc.x, pc.y, '#9fb7ff', 4);
       }
     }
-    // exhaust puffs
-    if (Math.abs(p.car.speed) > 60 && Math.random() < dt * 8) {
+    // exhaust puffs — seeded RNG (not Math.random) so staged frames and
+    // the self-test stay reproducible from the seed alone
+    if (Math.abs(p.car.speed) > 60 && rng.next() < dt * 8) {
       G.particles.push({
         x: p.car.x - Math.cos(p.car.angle) * 24, y: p.car.y - Math.sin(p.car.angle) * 24,
         size: 3, color: 'rgba(200,200,200,0.5)', life: 0.4, max: 0.4,
@@ -453,6 +464,14 @@ function update(dt) {
   // world life — density is kept up NEAR the player in the respawn step below
   const allCars = [...G.parked, ...G.traffic, ...G.police, ...G.roadblocks, ...(p.car ? [p.car] : [])];
   updateTraffic(G.traffic, world, dt, rng, allCars, G.peds);
+  // Blocked drivers honk (v3): entities flag it, main owns the audio —
+  // only nearby honks are audible so a distant jam stays silent.
+  for (const c of G.traffic) {
+    if (!c.wantsHonk) continue;
+    c.wantsHonk = false;
+    const pos = G.playerPos();
+    if (Math.hypot(c.x - pos.x, c.y - pos.y) < 520) audio.honkBlocked(c.id);
+  }
   updatePeds(G.peds, world, dt, rng, dangerNow, allCars);
   updatePolice(G.police, G.playerPos(), dt, world, vision);
   updateOfficers(G.officers, G.playerPos(), dt, world, vision);
@@ -557,8 +576,11 @@ function startGame(fromSave) {
   ui.banner('SOLMAR BAY — steal a car, run the jobs');
 }
 function togglePause() {
-  if (G.mode === 'play') { G.mode = 'pause'; ui.showPause(); audio.stopSiren(); }
-  else if (G.mode === 'pause') { G.mode = 'play'; ui.hidePause(); }
+  if (G.mode === 'play') {
+    G.mode = 'pause';
+    ui.showPause({ ...G.stats, exportsDone: G.exportsDone });
+    audio.stopSiren();
+  } else if (G.mode === 'pause') { G.mode = 'play'; ui.hidePause(); }
 }
 
 document.getElementById('new-game-btn').addEventListener('click', () => { G.save = null; startGame(false); });

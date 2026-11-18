@@ -13,6 +13,12 @@
 // game/src/staging.js. The dossier inputs stay deterministic: no clock,
 // no randomness — the same tree always produces the same dossier.json.
 //
+// v3 polish pass: a slow day-cycle light (dawn → golden hour → dusk →
+// nightfall) driven by game time with a HUD clock, traffic drivers who
+// honk when blocked, and a pause-screen session stats panel. serve.ts
+// was upgraded alongside (ETag / Cache-Control / gzip / PORT) — it is a
+// dev-only server and is not part of this dossier.
+//
 // Serve it locally with `node serve.ts`, then open http://localhost:8080.
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
 //   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
@@ -26,6 +32,10 @@ const here = fileURLToPath(new URL('.', import.meta.url));
 const out = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
 
 mkdirSync(out, { recursive: true });
+// Fail loudly instead of shipping a hollow dossier if the tree is wrong.
+if (!existsSync(join(here, 'game', 'index.html'))) {
+  throw new Error('game/index.html is missing — refusing to build a dossier without the game');
+}
 // game/ ships whole: index.html + src/{config,random,input,audio,world,
 // entities,missions,render,ui,staging,main}.js — all static, all offline.
 cpSync(join(here, 'game'), join(out, 'game'), { recursive: true });

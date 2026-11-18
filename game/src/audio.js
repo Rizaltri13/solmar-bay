@@ -20,6 +20,9 @@ export class AudioSys {
         const t = this.ctx.currentTime;
         this.engineOsc.frequency.setTargetAtTime(52 + Math.abs(speedRatio) * 130, t, 0.08);
         this.engineGain.gain.setTargetAtTime(0.014 + Math.abs(speedRatio) * 0.02, t, 0.1);
+        // The lowpass opens up with speed too, so a fast car sounds
+        // brighter — not just higher — than a crawling one.
+        if (this._engineFilter) this._engineFilter.frequency.setTargetAtTime(420 + Math.abs(speedRatio) * 900, t, 0.12);
       }
       if (!driving && this._engineOn) this.stopEngine();
     } catch (e) { /* ignore */ }
@@ -47,6 +50,14 @@ export class AudioSys {
   }
   gull() { this.tone(1180, 0.28, 'sine', 0.035, 760); }
   honk() { this.tone(340, 0.16, 'square', 0.06, 300); }
+  // Blocked-traffic honk (v3): a touch lower and longer than the crash
+  // honk, with a per-driver pitch so a jam does not sound like one horn.
+  honkBlocked(seed = 0) {
+    const base = 285 + ((seed * 37) % 55);
+    this.tone(base, 0.22, 'square', 0.055, base - 28);
+  }
+  // Soft two-note chime when the day phase changes (golden hour, dusk…).
+  dayChime() { this.tone(784, 0.16, 'sine', 0.05); setTimeout(() => this.tone(587, 0.22, 'sine', 0.045), 130); }
   officerShot() { this.noise(0.07, 0.1, 1500); this.tone(150, 0.06, 'square', 0.06, 70); }
   ensure() {
     try {

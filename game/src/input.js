@@ -11,7 +11,10 @@ export class Input {
       this.keys.add(e.code);
     });
     window.addEventListener('keyup', (e) => this.keys.delete(e.code));
-    window.addEventListener('blur', () => this.keys.clear());
+    // Losing focus must not leave a stuck key (or a stuck trigger) behind:
+    // clear held keys, edge presses and the mouse button together.
+    window.addEventListener('blur', () => this.resetTransientState());
+    canvas.addEventListener('mouseleave', () => { this.mouse.down = false; });
     canvas.addEventListener('mousemove', (e) => {
       // Scale CSS pixels → canvas pixels: the canvas is styled to the full
       // window but has a fixed internal resolution, so without this the aim
@@ -36,17 +39,29 @@ export class Input {
     const sy = wy - cam.y + canvas.height / 2;
     return Math.atan2(this.mouse.y - sy, this.mouse.x - sx);
   }
+  // Drop every transient input at once (window blur, pause, respawn).
+  resetTransientState() {
+    this.keys.clear(); this.pressed.clear();
+    this.mouse.down = false; this.mouse.clicked = false;
+  }
   down(code) { return this.keys.has(code); }
   wasPressed(code) { return this.pressed.has(code); }
+  // True when ANY of the given codes was edge-pressed this frame.
+  wasPressedAny(codes) { return codes.some((c) => this.pressed.has(c)); }
   endFrame() { this.pressed.clear(); this.mouse.clicked = false; }
-  // WASD / arrows as a -1..1 vector
+  // WASD / arrows as a -1..1 vector. Also carries the handbrake: the
+  // title screen promises "Space = handbrake while driving" and
+  // entities.driveCar reads mv.handbrake, but moveVec never set it —
+  // so the handbrake silently did nothing for real keyboard players.
+  // (On foot Space still punches; main only drives with this vector
+  // while Mara is in a car, so the two uses never collide.)
   moveVec() {
     let x = 0, y = 0;
     if (this.down('KeyA') || this.down('ArrowLeft')) x -= 1;
     if (this.down('KeyD') || this.down('ArrowRight')) x += 1;
     if (this.down('KeyW') || this.down('ArrowUp')) y -= 1;
     if (this.down('KeyS') || this.down('ArrowDown')) y += 1;
-    if (x && y) { x *= 0.7071; y *= 0.7071; }
-    return { x, y };
+    if (x && y) { x *= Math.SQRT1_2; y *= Math.SQRT1_2; }
+    return { x, y, handbrake: this.down('Space') };
   }
 }

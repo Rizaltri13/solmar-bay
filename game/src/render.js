@@ -1,6 +1,35 @@
 // Everything painted on the canvas: the city, the cast, effects, and the
-// sunset light that gives Solmar Bay its look. HUD/minimap live in ui.js.
+// light that gives Solmar Bay its look. HUD/minimap live in ui.js.
+// v3: the old fixed sunset wash is now a slow DAY CYCLE — dayPhaseAt()
+// resolves the normalised dayT (0..1, owned by main.js) to the active
+// phase, its label and its full-screen tint, interpolating the tint
+// alpha toward the next phase so light drifts instead of snapping.
 import { CFG } from './config.js';
+
+export function parseTint(tint) {
+  const m = /rgba\((\d+),(\d+),(\d+),([\d.]+)\)/.exec(tint || '');
+  if (!m) return { r: 0, g: 0, b: 0, a: 0 };
+  return { r: +m[1], g: +m[2], b: +m[3], a: +m[4] };
+}
+
+export function dayPhaseAt(dayT) {
+  const phases = CFG.DAY_PHASES;
+  const t = ((dayT % 1) + 1) % 1;
+  let idx = 0;
+  for (let i = 0; i < phases.length; i++) if (t >= phases[i].at) idx = i;
+  const cur = phases[idx];
+  const nxt = phases[(idx + 1) % phases.length];
+  const span = ((idx + 1 < phases.length ? phases[idx + 1].at : 1) - cur.at) || 1;
+  const blend = Math.max(0, Math.min(1, (t - cur.at) / span));
+  const a = parseTint(cur.tint), b = parseTint(nxt.tint);
+  const mix = (x, y) => Math.round(x + (y - x) * blend);
+  const tint = `rgba(${mix(a.r, b.r)},${mix(a.g, b.g)},${mix(a.b, b.b)},${(a.a + (b.a - a.a) * blend).toFixed(3)})`;
+  // A readable in-game clock: dayT 0 = 05:00, one full turn = 24h.
+  const hour = (5 + t * 24) % 24;
+  const hh = String(Math.floor(hour)).padStart(2, '0');
+  const mm = String(Math.floor((hour % 1) * 60)).padStart(2, '0');
+  return { label: cur.label, tint, clock: `${hh}:${mm}`, index: idx };
+}
 
 function drawCar(ctx, c, time) {
   ctx.save();
@@ -53,19 +82,22 @@ function drawCar(ctx, c, time) {
   ctx.restore();
 }
 
-function drawPalm(ctx, palm) {
+function drawPalm(ctx, palm, time = 0) {
   const s = palm.s || 1;
+  // Sea-breeze sway (v3 polish): fronds lean a few degrees with a slow
+  // sine, phase-shifted per tree so the row never moves in lockstep.
+  const sway = Math.sin(time * 0.9 + palm.x * 0.013 + palm.y * 0.007) * 0.09;
   ctx.fillStyle = '#7a5a34'; ctx.fillRect(palm.x - 2 * s, palm.y - 2 * s, 4 * s, 10 * s);
   ctx.strokeStyle = '#2e7d32'; ctx.lineWidth = 3 * s;
   for (let i = 0; i < 6; i++) {
-    const a = (i / 6) * Math.PI * 2 + palm.x * 0.01;
+    const a = (i / 6) * Math.PI * 2 + palm.x * 0.01 + sway;
     ctx.beginPath(); ctx.moveTo(palm.x, palm.y - 2 * s);
     ctx.quadraticCurveTo(palm.x + Math.cos(a) * 10 * s, palm.y - 8 * s, palm.x + Math.cos(a) * 16 * s, palm.y + 2 * s);
     ctx.stroke();
   }
 }
 
-function drawDistrictDressing(ctx, world, x0, y0, vw, vh) {
+function drawDistrictDressing(ctx, world, x0, y0, vw, vh, time = 0) {
   const d = world.decorations;
   if (!d) return;
   // Crosswalks: zebra stripes on two arms of every visible intersection
@@ -94,7 +126,7 @@ function drawDistrictDressing(ctx, world, x0, y0, vw, vh) {
   // Palms
   for (const p of d.palms) {
     if (p.x < x0 - 40 || p.y < y0 - 40 || p.x > x0 + vw + 40 || p.y > y0 + vh + 40) continue;
-    drawPalm(ctx, p);
+    drawPalm(ctx, p, time);
   }
   // Storefront / motel signs — bright rectangles with readable names
   ctx.textAlign = 'center';
@@ -245,7 +277,7 @@ export function drawWorld(ctx, G, cam, time) {
   }
 
   // District dressing over the streets, under the cast
-  drawDistrictDressing(ctx, world, x0, y0, vw, vh);
+  drawDistrictDressing(ctx, world, x0, y0, vw, vh, time);
 
   // Key locations
   drawPlace(ctx, world.bank.x, world.bank.y, 'BANK', '#f1c40f');
@@ -334,10 +366,18 @@ export function drawWorld(ctx, G, cam, time) {
   }
   ctx.globalAlpha = 1;
 
-  // Sunset wash: warm vignette over everything
+  // Day-cycle wash (v3): a flat tint for the current phase, plus the
+  // warm vignette whose strength follows the tint so golden hour and
+  // dusk feel deeper than midday without any extra art.
+  const phase = dayPhaseAt(G.dayT ?? CFG.DAY_START);
+  if (parseTint(phase.tint).a > 0.003) {
+    ctx.fillStyle = phase.tint;
+    ctx.fillRect(x0, y0, vw, vh);
+  }
+  const vignetteStrength = 0.08 + parseTint(phase.tint).a * 0.55;
   const grad = ctx.createRadialGradient(cam.x, cam.y, vh * 0.35, cam.x, cam.y, vh * 0.95);
   grad.addColorStop(0, 'rgba(255,170,80,0)');
-  grad.addColorStop(1, 'rgba(255,120,40,0.16)');
+  grad.addColorStop(1, `rgba(255,120,40,${vignetteStrength.toFixed(3)})`);
   ctx.fillStyle = grad;
   ctx.fillRect(x0, y0, vw, vh);
 }

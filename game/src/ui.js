@@ -1,6 +1,15 @@
 // HUD (drawn on the canvas), live minimap, and the DOM menus:
 // title, pause, busted/wasted, dialogue, banner.
+// v3: the HUD carries the day-cycle clock/phase and the pause screen
+// gains a session stats panel (jobs, exports, cash earned, time played).
 import { CFG } from './config.js';
+import { dayPhaseAt } from './render.js';
+
+export function formatPlayTime(totalSeconds) {
+  const s = Math.max(0, Math.floor(totalSeconds || 0));
+  const m = Math.floor(s / 60), sec = s % 60;
+  return m > 0 ? `${m}m ${String(sec).padStart(2, '0')}s` : `${sec}s`;
+}
 
 export class UI {
   constructor(doc) {
@@ -25,7 +34,15 @@ export class UI {
     if (best && save) best.textContent = `Continue: $${save.cash} · mission ${Math.min(save.missionIdx + 1, 5)}/5 · best $${save.bestCash || save.cash}`;
   }
   hideTitle() { this.titleEl.classList.add('hidden'); }
-  showPause() { this.pauseEl.classList.remove('hidden'); }
+  showPause(stats = null) {
+    this.pauseEl.classList.remove('hidden');
+    const el = this.doc.getElementById('pause-stats');
+    if (el && stats) {
+      el.textContent =
+        `Jobs done: ${stats.missionsCompleted} · Exports delivered: ${stats.exportsDone} · ` +
+        `Cash earned: $${Math.floor(stats.cashEarned).toLocaleString('en-US')} · Time played: ${formatPlayTime(stats.timePlayed)}`;
+    }
+  }
   hidePause() { this.pauseEl.classList.add('hidden'); }
   showEnd(kind, text) {
     this.endTitle.textContent = kind === 'busted' ? 'BUSTED!' : 'WASTED!';
@@ -68,7 +85,10 @@ export function drawHUD(ctx, G) {
   roundRect(ctx, 12, 12, 250, 74, 8); ctx.fill();
   ctx.fillStyle = '#2ecc71'; ctx.font = 'bold 22px sans-serif';
   ctx.fillText(`$${Math.floor(p.cash).toLocaleString('en-US')}`, 24, 40);
-  ctx.fillStyle = '#fff'; ctx.font = '13px sans-serif';
+  // Low ammo turns amber/red (v3 polish): a reload problem should be
+  // visible before the magazine is actually empty, not after a click.
+  ctx.fillStyle = p.ammo <= 0 ? '#e74c3c' : (p.ammo <= 6 ? '#ffb347' : '#fff');
+  ctx.font = '13px sans-serif';
   ctx.fillText(`AMMO ${p.ammo}  •  MISSION ${Math.min(G.missions.idx + 1, 5)}/5`, 24, 62);
   // health bar
   ctx.fillStyle = '#333'; ctx.fillRect(24, 70, 150, 8);
@@ -89,13 +109,18 @@ export function drawHUD(ctx, G) {
     ctx.font = 'bold 11px sans-serif'; ctx.textAlign = 'center';
     ctx.fillText(G.searching ? '◌ SEARCHING — stay hidden' : '● PURSUIT — they see you', W - 112, 74);
   }
-  // District name, top-centre — the city tells you where you are
-  const district = G.world.districtAt ? G.world.districtAt(G.playerPos().x, G.playerPos().y) : null;
-  if (district) {
+  // District + day-cycle readout, top-centre in ONE pill (v3 polish):
+  // a separate clock pill underneath collided with the DOM banner that
+  // sits at top:52px — the banner clipped its text in staged frames.
+  // Combined, the city and the drifting light share one legible line.
+  {
+    const district = G.world.districtAt ? G.world.districtAt(G.playerPos().x, G.playerPos().y) : null;
+    const phase = dayPhaseAt(G.dayT ?? CFG.DAY_START);
+    const label = district ? `${district.name} · ${phase.clock} ${phase.label}` : `${phase.clock} ${phase.label}`;
     ctx.fillStyle = 'rgba(0,0,0,0.4)';
-    roundRect(ctx, W / 2 - 90, 12, 180, 26, 8); ctx.fill();
+    roundRect(ctx, W / 2 - 130, 12, 260, 26, 8); ctx.fill();
     ctx.fillStyle = '#ffd9a0'; ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'center';
-    ctx.fillText(district.name, W / 2, 30);
+    ctx.fillText(label, W / 2, 30);
   }
 
   // Bottom-left: objective + distance + timer

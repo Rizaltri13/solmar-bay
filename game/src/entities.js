@@ -11,8 +11,11 @@ export function makeCar(x, y, angle, color, model = 'sedan', kind = 'traffic') {
   return {
     id: _id++, kind, model, color, x, y, angle,
     speed: 0, vx: 0, vy: 0, hp: 100, damage: 0, hitFlash: 0,
-    // traffic AI — panicT makes a car swerve + hurry after an impact
+    // traffic AI — panicT makes a car swerve + hurry after an impact;
+    // blockedT / honkCd drive the v3 "impatient driver" honk when a car
+    // sits blocked behind another vehicle or a pedestrian for a while.
     roadAxis: null, roadDir: 1, targetSpeed: 0, stuck: 0, panicT: 0, honkT: 0,
+    blockedT: 0, honkCd: 0, wantsHonk: false,
     // police AI — pursuit / search / roadblock state machine
     ramCd: 0, policeState: 'chase', searchT: 0, searchTarget: null, lastSeen: null,
     w: model === 'truck' || model === 'van' ? 52 : 44, h: model === 'truck' || model === 'van' ? 23 : 20,
@@ -55,7 +58,7 @@ export function spawnPeds(world, rng, n) {
     const p = world.randomRoadPoint(rng);
     out.push({
       id: _id++, x: p.x + rng.range(-40, 40), y: p.y + rng.range(-40, 40),
-      angle: rng.range(0, Math.PI * 2), speed: rng.range(28, 55),
+      angle: rng.angle(), speed: rng.range(28, 55),
       color: rng.pick(['#e8d44d', '#7fb3d5', '#d98880', '#a9dfbf', '#f0e6d2', '#c39bd3']),
       hp: 30, flee: 0, dead: false, walkPhase: rng.range(0, 6), hitFlash: 0, dodgeT: 0,
     });
@@ -111,6 +114,8 @@ export function updateTraffic(list, world, dt, rng, allCars, peds = []) {
   for (const c of list) {
     c.hitFlash = Math.max(0, (c.hitFlash || 0) - dt);
     c.panicT = Math.max(0, (c.panicT || 0) - dt);
+    c.honkCd = Math.max(0, (c.honkCd || 0) - dt);
+    c.wantsHonk = false;
     const aheadX = c.x + Math.cos(c.angle) * 46, aheadY = c.y + Math.sin(c.angle) * 46;
     let blocked = false;
     for (const o of allCars) {
@@ -123,6 +128,15 @@ export function updateTraffic(list, world, dt, rng, allCars, peds = []) {
       const d = (pd.x - aheadX) * (pd.x - aheadX) + (pd.y - aheadY) * (pd.y - aheadY);
       if (d < 34 * 34) { blocked = true; break; }
     }
+    // Impatience (v3): time spent blocked accumulates; past the config
+    // threshold the driver asks main.js for a honk (audio lives there),
+    // then cools down so a jam is a chorus, not a single endless blast.
+    if (blocked && Math.abs(c.speed) < 24) {
+      c.blockedT = (c.blockedT || 0) + dt;
+      if (c.blockedT >= CFG.TRAFFIC_HONK_AFTER && c.honkCd <= 0) {
+        c.wantsHonk = true; c.honkCd = CFG.TRAFFIC_HONK_COOLDOWN; c.blockedT = 0;
+      }
+    } else c.blockedT = Math.max(0, (c.blockedT || 0) - dt * 2);
     const want = blocked ? 0 : (c.panicT > 0 ? c.targetSpeed * 1.7 : c.targetSpeed);
     c.speed += Math.max(-260, Math.min(260, (want - c.speed))) * dt;
     const px = c.x, py = c.y;

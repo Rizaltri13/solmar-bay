@@ -16,13 +16,24 @@ export class RNG {
   pick(arr) { return arr[Math.floor(this.next() * arr.length)]; }
   chance(p) { return this.next() < p; }
   sign() { return this.next() < 0.5 ? -1 : 1; }
+  // A full-turn angle — spawns and sweeps used to inline range(0, 2π)
+  // in five places; one named helper keeps those call sites readable.
+  angle() { return this.next() * Math.PI * 2; }
+  // Symmetric jitter around a centre value (decoration scatter, spawns).
+  jitter(centre, spread) { return centre + this.range(-spread, spread); }
+  // Clamp a drawn value into [lo, hi] without consuming extra draws.
+  clampedRange(a, b, lo, hi) { return Math.max(lo, Math.min(hi, this.range(a, b))); }
   // Weighted pick over [value, weight] pairs — district dressing + spawns.
   weighted(pairs) {
+    // Zero/negative weights must never win: the old loop could return a
+    // zero-weight entry when the roll landed exactly on a boundary.
+    const live = pairs.filter(([, w]) => w > 0);
+    const table = live.length ? live : pairs;
     let total = 0;
-    for (const [, w] of pairs) total += w;
+    for (const [, w] of table) total += w;
     let roll = this.next() * total;
-    for (const [v, w] of pairs) { roll -= w; if (roll <= 0) return v; }
-    return pairs[pairs.length - 1][0];
+    for (const [v, w] of table) { roll -= w; if (roll < 0) return v; }
+    return table[table.length - 1][0];
   }
   // A child stream with its own seed — subsystems can draw randomness
   // without perturbing the parent sequence the staging relies on.

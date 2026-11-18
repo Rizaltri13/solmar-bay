@@ -5,11 +5,23 @@
 // Nothing here runs during normal play.
 import { CFG } from './config.js';
 import { currentObjective } from './missions.js';
+import { dayPhaseAt } from './render.js';
+
+// Every staged frame is pinned to golden hour (v3): the warmest, most
+// readable light in the cycle, and — because dayT is pinned, not clock
+// driven — exactly reproducible across captures.
+export const SHOT_DAY_T = 0.66;
+export function pinShotLight(G) {
+  G.dayT = SHOT_DAY_T;
+  G.dayPhaseIdx = dayPhaseAt(SHOT_DAY_T).index;
+  return G.dayT;
+}
 
 // Stage one named screenshot scene and hold it. helpers = the verbs main.js
 // exposes (startGame, tryEnterCar, spawnPoliceCar, makeOfficer).
 export function stageShot(G, helpers, name) {
   const { world, ui } = G;
+  pinShotLight(G);
   if (name === 'title') {
     G.mode = 'title'; ui.showTitle(null);
     const intro = document.getElementById('story-line');
@@ -128,8 +140,13 @@ export function runSelfTest(G, helpers) {
     step(30);
     results.missionAdvanced = G.missions.idx >= 1;
     results.missionObjective = currentObjective(G.missions).text;
-    // on-foot combat: exit, shoot at a pedestrian placed in front of Mara
+    // on-foot combat: exit, shoot at a pedestrian placed in front of Mara.
+    // Stage it on the open 960/960 intersection: the old version shot
+    // from wherever the car happened to stop, and if a building stood
+    // within 120px east of that spot the (correct) occlusion rule ate
+    // the bullet and targetHit flaked run-to-run.
     helpers.exitCar();
+    G.player.x = 960; G.player.y = 960;
     G.player.angle = 0;
     const pd = G.peds.find((x) => !x.dead) || G.peds[0];
     pd.x = G.player.x + 120; pd.y = G.player.y; pd.hp = 30; pd.hitFlash = 0;
@@ -162,12 +179,22 @@ export function runSelfTest(G, helpers) {
     step(120);
     helpers.saveBest();
     results.saveWritten = !!localStorage.getItem('solmarbay-save');
+    // --- v3: the day cycle must actually advance + resolve a phase ---
+    const dayBefore = G.dayT;
+    step(120); // ~2s of play ≈ 2/240 of a turn
+    results.dayCycleAdvances = G.dayT > dayBefore || G.dayT < dayBefore - 0.5;
+    results.dayPhaseLabel = dayPhaseAt(G.dayT).label;
+    results.dayClockReadable = /^\d{2}:\d{2}$/.test(dayPhaseAt(G.dayT).clock);
+    // The screenshot light must be the pinned golden hour, exactly.
+    results.shotLightPinned = dayPhaseAt(SHOT_DAY_T).label === 'GOLDEN HOUR' &&
+      Math.abs(pinShotLight(G) - SHOT_DAY_T) < 1e-9;
     results.finalCash = Math.floor(G.player.cash);
     results.errors = G.errors;
     results.pass = results.started && results.enterCar && results.drove && results.carMoved &&
       results.wanted >= 2 && results.policeSpawned && results.missionAdvanced &&
       results.shotFired && results.targetHit && results.saveWritten &&
       results.searchPhase && results.exportPaid && results.courierPickupChain &&
+      results.dayCycleAdvances && results.dayClockReadable && results.shotLightPinned &&
       G.errors.length === 0;
   } catch (e) {
     G.errors.push('selftest exception: ' + (e && e.message));
